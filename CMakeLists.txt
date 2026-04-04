@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(lob_parser
     src/parser.cpp
+    src/order_book.cpp
+    src/replay.cpp
 )
 
 target_include_directories(lob_parser
@@ -43,6 +45,15 @@ add_executable(test_parser
 )
 
 target_link_libraries(test_parser
+    PRIVATE
+        lob_parser
+)
+
+add_executable(test_order_book
+    tests/test_order_book.cpp
+)
+
+target_link_libraries(test_order_book
     PRIVATE
         lob_parser
 )
