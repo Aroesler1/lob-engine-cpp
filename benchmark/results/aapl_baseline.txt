@@ -1,36 +1,43 @@
-# AAPL Baseline Benchmark Results
-# Date: 2026-04-04
-# Compiler: c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
-# Build type: Release (-O3 -DNDEBUG)
-# Data: Synthetic AAPL LOBSTER 10-level, 12000 messages
-# Hardware: Single-core, CI environment
-# Methodology: Pre-load all messages, warm up once, then timed sequential replay with auto-selected iterations for timer stability
-# Configurations: (1) with analytics, (2) without analytics
+# AAPL benchmark baseline
+Date: 2026-04-04
+Compiler: c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Build type: default CMake single-config build (`CMAKE_BUILD_TYPE` unset)
+Dataset: data/AAPL_2024-01-02_message_10.csv
+Dataset rows: 12000
+Dataset event types present: 1, 2, 3, 4, 5
+Hardware assumption: shared x86_64 Linux CI/workstation class machine, single benchmark process
+Methodology: preload file once, run one warm-up replay, then time sequential replay with `std::chrono::high_resolution_clock`
 
-## With analytics
-Data file: "/tmp/workflow-worktrees/project_real_time_limit_order_book_engine_in_c_1775258936-codex-repo_feature_build-148-20260404-061429-10_lzy4w/data/AAPL_2024-01-02_message_10.csv"
-Messages per iteration: 12000
+Baseline run 1
+Command: ./build/bench_orderbook
+Analytics: on
+CSV export: off
 Timed iterations: 1667
-Messages processed: 20004000
+Total messages: 20004000
+Elapsed time: 0.630861 s
+Throughput: 31709046.82 msgs/s
 Malformed while loading: 0
-Elapsed time: 0.155566 s
-Throughput: 128588110.64 msgs/s
-Analytics enabled: yes
-CSV export enabled: no
 Checksum: 2876893091008091576
-Time range: 34200.002168 - 34290.979848
-Total size across timed iterations: 3845769000
-Total notional across timed iterations (price x 10000): 5769293702348200
-Event counts across timed iterations: 1:11290591 2:3148963 3:1667000 4:2787224 5:1110222 6:0 7:0
 
-## Without analytics
-Data file: "/tmp/workflow-worktrees/project_real_time_limit_order_book_engine_in_c_1775258936-codex-repo_feature_build-148-20260404-061429-10_lzy4w/data/AAPL_2024-01-02_message_10.csv"
-Messages per iteration: 12000
+Baseline run 2
+Command: ./build/bench_orderbook --no-analytics
+Analytics: off
+CSV export: off
 Timed iterations: 1667
-Messages processed: 20004000
+Total messages: 20004000
+Elapsed time: 0.354136 s
+Throughput: 56486750.95 msgs/s
 Malformed while loading: 0
-Elapsed time: 0.160601 s
-Throughput: 124557485.16 msgs/s
-Analytics enabled: no
-CSV export enabled: no
 Checksum: 2876893091008091576
+
+Export smoke run
+Command: ./build/bench_orderbook --with-export --iterations 1
+Analytics: on
+CSV export: on
+Timed iterations: 1
+Total messages: 12000
+Elapsed time: 0.009402 s
+Throughput: 1276297.44 msgs/s
+Malformed while loading: 0
+Checksum: 11908354970997904912
+Export path: benchmark/results/aapl_replay_export.csv

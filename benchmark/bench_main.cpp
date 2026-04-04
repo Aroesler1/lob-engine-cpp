@@ -1,6 +1,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -223,7 +224,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Data file: " << config.data_path << '\n';
     std::cout << "Messages per iteration: " << messages.size() << '\n';
     std::cout << "Timed iterations: " << timed_iterations << '\n';
-    std::cout << "Messages processed: " << total_messages << '\n';
+    std::cout << "Total messages: " << total_messages << '\n';
     std::cout << "Malformed while loading: " << parser.malformed_count() << '\n';
     std::cout << std::fixed << std::setprecision(6);
     std::cout << "Elapsed time: " << elapsed_s << " s\n";
