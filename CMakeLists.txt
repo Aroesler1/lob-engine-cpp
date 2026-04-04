@@ -28,6 +28,11 @@ target_link_libraries(lobster_cli PRIVATE lobster_engine_lib)
 include(CTest)
 
 if(BUILD_TESTING)
+    add_executable(parser_tests tests/test_lobster_parser.cpp)
+    target_link_libraries(parser_tests PRIVATE lobster_engine_lib)
+    target_include_directories(parser_tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party)
+    add_test(NAME parser_cpp COMMAND parser_tests)
+
     add_executable(order_book_tests tests/test_order_book.cpp)
     target_link_libraries(order_book_tests PRIVATE lobster_engine_lib)
     target_include_directories(order_book_tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party)

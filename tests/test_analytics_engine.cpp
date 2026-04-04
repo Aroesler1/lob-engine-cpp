@@ -7,6 +7,33 @@
 
 #include <cmath>
 
+namespace {
+
+void requireRecordInvariants(const AnalyticsRecord& record) {
+    REQUIRE(record.bid_depth_1 >= 0);
+    REQUIRE(record.ask_depth_1 >= 0);
+    REQUIRE(record.bid_depth_1 <= record.bid_depth_5);
+    REQUIRE(record.bid_depth_5 <= record.bid_depth_10);
+    REQUIRE(record.ask_depth_1 <= record.ask_depth_5);
+    REQUIRE(record.ask_depth_5 <= record.ask_depth_10);
+    REQUIRE(record.order_imbalance >= Approx(-1.0));
+    REQUIRE(record.order_imbalance <= Approx(1.0));
+    REQUIRE(record.trade_flow_imbalance >= Approx(-1.0));
+    REQUIRE(record.trade_flow_imbalance <= Approx(1.0));
+
+    if (!std::isnan(record.best_bid) && !std::isnan(record.best_ask)) {
+        REQUIRE(record.best_bid <= record.best_ask);
+        REQUIRE(record.spread == Approx(record.best_ask - record.best_bid));
+        REQUIRE(record.mid == Approx((record.best_bid + record.best_ask) / 2.0));
+    }
+
+    if (!std::isnan(record.rolling_realized_vol)) {
+        REQUIRE(record.rolling_realized_vol >= 0.0);
+    }
+}
+
+}  // namespace
+
 TEST_CASE("analytics engine emits cumulative depths and NaN price fields when the book is one-sided", "[analytics]") {
     AnalyticsEngine engine(AnalyticsConfig{2, 1.0});
     OrderBook book;
@@ -72,4 +99,52 @@ TEST_CASE("analytics engine rolls trade and volatility windows forward", "[analy
     const AnalyticsRecord stale_record = engine.onMessage(stale_update, book);
     REQUIRE(stale_record.best_ask == Approx(102.0));
     REQUIRE(std::isnan(stale_record.rolling_realized_vol));
+}
+
+TEST_CASE("trade metrics only change on trade events and the rolling window drops the oldest trade", "[analytics]") {
+    AnalyticsEngine engine(AnalyticsConfig{2, 10.0});
+    OrderBook book;
+
+    const LobsterMessage add_bid{1.0, 1, 101, 10, 1000000, 1};
+    const LobsterMessage add_ask_1{1.1, 1, 201, 10, 1002000, -1};
+    const LobsterMessage buy_trade{1.2, 4, 101, 4, 1000000, 1};
+    const LobsterMessage add_ask_2{1.3, 1, 202, 5, 1003000, -1};
+    const LobsterMessage sell_trade_1{1.4, 4, 201, 5, 1002000, -1};
+    const LobsterMessage add_ask_3{1.5, 1, 203, 6, 1004000, -1};
+    const LobsterMessage sell_trade_2{1.6, 4, 202, 5, 1003000, -1};
+
+    for (const auto& message : {add_bid, add_ask_1}) {
+        book.processMessage(message);
+        requireRecordInvariants(engine.onMessage(message, book));
+    }
+
+    book.processMessage(buy_trade);
+    const AnalyticsRecord buy_trade_record = engine.onMessage(buy_trade, book);
+    requireRecordInvariants(buy_trade_record);
+    REQUIRE(buy_trade_record.rolling_vwap == Approx(100.0));
+    REQUIRE(buy_trade_record.trade_flow_imbalance == Approx(1.0));
+
+    book.processMessage(add_ask_2);
+    const AnalyticsRecord non_trade_record = engine.onMessage(add_ask_2, book);
+    requireRecordInvariants(non_trade_record);
+    REQUIRE(non_trade_record.rolling_vwap == Approx(buy_trade_record.rolling_vwap));
+    REQUIRE(non_trade_record.trade_flow_imbalance == Approx(buy_trade_record.trade_flow_imbalance));
+
+    book.processMessage(sell_trade_1);
+    const AnalyticsRecord mixed_trade_record = engine.onMessage(sell_trade_1, book);
+    requireRecordInvariants(mixed_trade_record);
+    REQUIRE(mixed_trade_record.rolling_vwap == Approx((100.0 * 4.0 + 100.2 * 5.0) / 9.0));
+    REQUIRE(mixed_trade_record.trade_flow_imbalance == Approx(-1.0 / 9.0));
+
+    book.processMessage(add_ask_3);
+    const AnalyticsRecord later_non_trade_record = engine.onMessage(add_ask_3, book);
+    requireRecordInvariants(later_non_trade_record);
+    REQUIRE(later_non_trade_record.rolling_vwap == Approx(mixed_trade_record.rolling_vwap));
+    REQUIRE(later_non_trade_record.trade_flow_imbalance == Approx(mixed_trade_record.trade_flow_imbalance));
+
+    book.processMessage(sell_trade_2);
+    const AnalyticsRecord rolled_trade_record = engine.onMessage(sell_trade_2, book);
+    requireRecordInvariants(rolled_trade_record);
+    REQUIRE(rolled_trade_record.rolling_vwap == Approx((100.2 * 5.0 + 100.3 * 5.0) / 10.0));
+    REQUIRE(rolled_trade_record.trade_flow_imbalance == Approx(-1.0));
 }

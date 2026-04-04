@@ -6,6 +6,17 @@
 
 #include <filesystem>
 
+namespace {
+
+void requireLevel(const OrderBook& book, int side, int index, int64_t expected_size, int32_t expected_orders) {
+    const auto level = book.nthLevel(side, index);
+    REQUIRE(level.has_value());
+    REQUIRE(level->total_size == expected_size);
+    REQUIRE(level->order_count == expected_orders);
+}
+
+}  // namespace
+
 TEST_CASE("add single buy order populates best bid", "[order_book]") {
     OrderBook book;
 
@@ -90,13 +101,72 @@ TEST_CASE("multiple orders at the same price aggregate size and count", "[order_
     REQUIRE(level->order_count == 2);
 }
 
-TEST_CASE("unknown order cancel is counted and does not crash", "[order_book]") {
+TEST_CASE("bid-side mutations update aggregated levels and move the best bid when a level empties", "[order_book]") {
     OrderBook book;
 
-    book.cancelOrder(999, 5);
+    book.addOrder(101, 1, 1000000, 10);
+    book.addOrder(102, 1, 1000000, 5);
+    book.addOrder(103, 1, 999500, 7);
 
-    REQUIRE(book.unknownIdCount() == 1);
-    REQUIRE(book.orderCount() == 0);
+    REQUIRE(book.bestBid() == 1000000);
+    requireLevel(book, 1, 0, 15, 2);
+    requireLevel(book, 1, 1, 7, 1);
+
+    book.cancelOrder(101, 4);
+    REQUIRE(book.getOrder(101)->remaining == 6);
+    requireLevel(book, 1, 0, 11, 2);
+
+    book.executeOrder(102, 5);
+    REQUIRE_FALSE(book.getOrder(102).has_value());
+    REQUIRE(book.bestBid() == 1000000);
+    requireLevel(book, 1, 0, 6, 1);
+
+    book.cancelOrder(101, 6);
+    REQUIRE_FALSE(book.getOrder(101).has_value());
+    REQUIRE(book.bestBid() == 999500);
+    requireLevel(book, 1, 0, 7, 1);
+    REQUIRE_FALSE(book.nthLevel(1, 1).has_value());
+}
+
+TEST_CASE("ask-side mutations aggregate same-price orders and clamp over-cancels to the resting quantity", "[order_book]") {
+    OrderBook book;
+
+    book.addOrder(201, -1, 1002000, 8);
+    book.addOrder(202, -1, 1002000, 5);
+    book.addOrder(203, -1, 1004000, 3);
+
+    REQUIRE(book.bestAsk() == 1002000);
+    requireLevel(book, -1, 0, 13, 2);
+    requireLevel(book, -1, 1, 3, 1);
+
+    book.executeOrder(201, 3);
+    REQUIRE(book.getOrder(201)->remaining == 5);
+    requireLevel(book, -1, 0, 10, 2);
+
+    // Current engine semantics clamp reductions to the order's remaining quantity.
+    book.cancelOrder(202, 50);
+    REQUIRE_FALSE(book.getOrder(202).has_value());
+    REQUIRE(book.bestAsk() == 1002000);
+    requireLevel(book, -1, 0, 5, 1);
+
+    book.executeOrder(201, 5);
+    REQUIRE_FALSE(book.getOrder(201).has_value());
+    REQUIRE(book.bestAsk() == 1004000);
+    requireLevel(book, -1, 0, 3, 1);
+    REQUIRE_FALSE(book.nthLevel(-1, 1).has_value());
+}
+
+TEST_CASE("missing cancel and execute leave the book unchanged while incrementing the unknown id counter", "[order_book]") {
+    OrderBook book;
+    book.addOrder(101, 1, 1000000, 25);
+
+    book.cancelOrder(999, 5);
+    book.executeOrder(999, 7);
+
+    REQUIRE(book.unknownIdCount() == 2);
+    REQUIRE(book.orderCount() == 1);
+    REQUIRE(book.bestBid() == 1000000);
+    requireLevel(book, 1, 0, 25, 1);
 }
 
 TEST_CASE("hidden execution increments its counter without mutating the book", "[order_book]") {

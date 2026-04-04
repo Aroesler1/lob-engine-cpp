@@ -23,6 +23,18 @@ EXPECTED_HEADER = [
     "rolling_realized_vol",
 ]
 
+EXPECTED_REPLAY_BBO_LINES = [
+    "1.000000 BBO: 1000000x10 | ---  spread=NA",
+    "1.000001 BBO: 1000000x10 | 1002000x8  spread=2000",
+    "1.000002 BBO: 1000000x15 | 1002000x8  spread=2000",
+    "1.000003 BBO: 1000000x11 | 1002000x8  spread=2000",
+    "1.000004 BBO: 1000000x11 | 1002000x5  spread=2000",
+    "1.000005 BBO: 1000000x6 | 1002000x5  spread=2000",
+    "1.000006 BBO: 1000000x6 | ---  spread=NA",
+    "1.000007 BBO: 1000000x6 | 1001000x7  spread=1000",
+    "1.000008 BBO: 1000000x6 | 1001000x5  spread=1000",
+]
+
 
 def parse_optional_float(value: str):
     return None if value == "" else float(value)
@@ -55,6 +67,50 @@ def read_rows(csv_path: Path):
         reader = csv.DictReader(handle)
         rows = list(reader)
         return reader.fieldnames, rows
+
+
+def assert_row_matches(test_case: unittest.TestCase, row, expected):
+    for key, value in expected.items():
+        test_case.assertEqual(row[key], value)
+
+
+def assert_common_row_invariants(test_case: unittest.TestCase, rows):
+    for row in rows:
+        best_bid = parse_optional_float(row["best_bid"])
+        best_ask = parse_optional_float(row["best_ask"])
+        spread = parse_optional_float(row["spread"])
+        mid = parse_optional_float(row["mid"])
+        bid_depth_1 = int(row["bid_depth_1"])
+        ask_depth_1 = int(row["ask_depth_1"])
+        bid_depth_5 = int(row["bid_depth_5"])
+        ask_depth_5 = int(row["ask_depth_5"])
+        bid_depth_10 = int(row["bid_depth_10"])
+        ask_depth_10 = int(row["ask_depth_10"])
+        order_imbalance = float(row["order_imbalance"])
+        trade_flow_imbalance = float(row["trade_flow_imbalance"])
+        rolling_realized_vol = parse_optional_float(row["rolling_realized_vol"])
+
+        test_case.assertGreaterEqual(bid_depth_1, 0)
+        test_case.assertGreaterEqual(ask_depth_1, 0)
+        test_case.assertLessEqual(bid_depth_1, bid_depth_5)
+        test_case.assertLessEqual(bid_depth_5, bid_depth_10)
+        test_case.assertLessEqual(ask_depth_1, ask_depth_5)
+        test_case.assertLessEqual(ask_depth_5, ask_depth_10)
+        test_case.assertGreaterEqual(order_imbalance, -1.0)
+        test_case.assertLessEqual(order_imbalance, 1.0)
+        test_case.assertGreaterEqual(trade_flow_imbalance, -1.0)
+        test_case.assertLessEqual(trade_flow_imbalance, 1.0)
+
+        if best_bid is not None and best_ask is not None:
+            test_case.assertGreaterEqual(best_ask, best_bid)
+            test_case.assertAlmostEqual(spread, best_ask - best_bid, places=4)
+            test_case.assertAlmostEqual(mid, (best_bid + best_ask) / 2.0, places=4)
+        else:
+            test_case.assertIsNone(spread)
+            test_case.assertIsNone(mid)
+
+        if rolling_realized_vol is not None:
+            test_case.assertGreaterEqual(rolling_realized_vol, 0.0)
 
 
 class AnalyticsIntegrationTest(unittest.TestCase):
@@ -105,52 +161,22 @@ class AnalyticsIntegrationTest(unittest.TestCase):
         saw_empty_mid = False
         saw_vwap = False
 
+        assert_common_row_invariants(self, rows)
+
         for row in rows:
             self.assertEqual(list(row.keys()), EXPECTED_HEADER)
             self.assertEqual(len(row), len(EXPECTED_HEADER))
 
-            best_bid = parse_optional_float(row["best_bid"])
-            best_ask = parse_optional_float(row["best_ask"])
-            spread = parse_optional_float(row["spread"])
             mid = parse_optional_float(row["mid"])
-            bid_depth_1 = int(row["bid_depth_1"])
-            ask_depth_1 = int(row["ask_depth_1"])
-            bid_depth_5 = int(row["bid_depth_5"])
-            ask_depth_5 = int(row["ask_depth_5"])
-            bid_depth_10 = int(row["bid_depth_10"])
-            ask_depth_10 = int(row["ask_depth_10"])
-            order_imbalance = float(row["order_imbalance"])
             rolling_vwap = parse_optional_float(row["rolling_vwap"])
-            trade_flow_imbalance = float(row["trade_flow_imbalance"])
-            rolling_realized_vol = parse_optional_float(row["rolling_realized_vol"])
 
-            self.assertGreaterEqual(bid_depth_1, 0)
-            self.assertGreaterEqual(ask_depth_1, 0)
-            self.assertLessEqual(bid_depth_1, bid_depth_5)
-            self.assertLessEqual(bid_depth_5, bid_depth_10)
-            self.assertLessEqual(ask_depth_1, ask_depth_5)
-            self.assertLessEqual(ask_depth_5, ask_depth_10)
-            self.assertGreaterEqual(order_imbalance, -1.0)
-            self.assertLessEqual(order_imbalance, 1.0)
-            self.assertGreaterEqual(trade_flow_imbalance, -1.0)
-            self.assertLessEqual(trade_flow_imbalance, 1.0)
-
-            if best_bid is not None and best_ask is not None:
-                self.assertGreaterEqual(best_ask, best_bid)
-                self.assertAlmostEqual(spread, best_ask - best_bid, places=4)
-                self.assertAlmostEqual(mid, (best_bid + best_ask) / 2.0, places=4)
-            else:
+            if mid is None:
                 saw_empty_mid = True
-                self.assertIsNone(spread)
-                self.assertIsNone(mid)
 
             if rolling_vwap is not None:
                 saw_vwap = True
                 self.assertGreaterEqual(rolling_vwap, min(trade_prices))
                 self.assertLessEqual(rolling_vwap, max(trade_prices))
-
-            if rolling_realized_vol is not None:
-                self.assertGreaterEqual(rolling_realized_vol, 0.0)
 
         self.assertTrue(saw_empty_mid)
         self.assertTrue(saw_vwap)
@@ -208,15 +234,97 @@ class AnalyticsIntegrationTest(unittest.TestCase):
         self.assertEqual(row4["mid"], "")
         self.assertAlmostEqual(float(row4["rolling_vwap"]), 100.2, places=4)
 
-    def test_cpp_analytics_target_passes_under_ctest(self):
+    def test_replay_fixture_is_deterministic_and_csv_stable(self):
+        replay_file = self.repo_root / "tests" / "data" / "deterministic_replay.csv"
+        first_output = Path(self.tempdir.name) / "deterministic_replay_a.csv"
+        second_output = Path(self.tempdir.name) / "deterministic_replay_b.csv"
+
+        first_run = self.run_cli(replay_file, first_output)
+        second_run = self.run_cli(replay_file, second_output)
+
+        self.assertEqual(first_run.stdout.splitlines(), EXPECTED_REPLAY_BBO_LINES)
+        self.assertEqual(second_run.stdout, first_run.stdout)
+
+        first_header, first_rows = read_rows(first_output)
+        second_header, second_rows = read_rows(second_output)
+        self.assertEqual(first_header, EXPECTED_HEADER)
+        self.assertEqual(second_header, EXPECTED_HEADER)
+        self.assertEqual(first_rows, second_rows)
+        self.assertEqual(len(first_rows), 9)
+
+        assert_common_row_invariants(self, first_rows)
+
+        assert_row_matches(
+            self,
+            first_rows[0],
+            {
+                "timestamp": "1.000000",
+                "best_bid": "100.0000",
+                "best_ask": "",
+                "spread": "",
+                "mid": "",
+                "bid_depth_1": "10",
+                "ask_depth_1": "0",
+                "order_imbalance": "1.000000",
+                "rolling_vwap": "",
+            },
+        )
+        assert_row_matches(
+            self,
+            first_rows[4],
+            {
+                "timestamp": "1.000004",
+                "best_bid": "100.0000",
+                "best_ask": "100.2000",
+                "spread": "0.2000",
+                "mid": "100.1000",
+                "bid_depth_1": "11",
+                "ask_depth_1": "5",
+                "rolling_vwap": "100.2000",
+                "trade_flow_imbalance": "-1.000000",
+            },
+        )
+        assert_row_matches(
+            self,
+            first_rows[8],
+            {
+                "timestamp": "1.000008",
+                "best_bid": "100.0000",
+                "best_ask": "100.1000",
+                "spread": "0.1000",
+                "mid": "100.0500",
+                "bid_depth_1": "6",
+                "ask_depth_1": "5",
+                "rolling_vwap": "100.1800",
+                "trade_flow_imbalance": "-1.000000",
+            },
+        )
+
+        self.assertEqual(first_rows[4]["rolling_vwap"], first_rows[5]["rolling_vwap"])
+        self.assertEqual(first_rows[5]["rolling_vwap"], first_rows[6]["rolling_vwap"])
+        self.assertEqual(first_rows[6]["rolling_vwap"], first_rows[7]["rolling_vwap"])
+        self.assertEqual(first_rows[7]["rolling_vwap"], "100.2000")
+        self.assertEqual(first_rows[8]["rolling_vwap"], "100.1800")
+
+    def test_cpp_unit_targets_pass_under_ctest(self):
         ctest = subprocess.run(
-            ["ctest", "--test-dir", str(self.build_dir), "--output-on-failure", "-R", "analytics_cpp"],
+            [
+                "ctest",
+                "--test-dir",
+                str(self.build_dir),
+                "--output-on-failure",
+                "-R",
+                "parser_cpp|order_book_cpp|analytics_cpp",
+            ],
             capture_output=True,
             text=True,
             check=False,
         )
         self.assertEqual(ctest.returncode, 0, ctest.stdout + ctest.stderr)
-        self.assertIn("analytics_cpp", ctest.stdout + ctest.stderr)
+        output = ctest.stdout + ctest.stderr
+        self.assertIn("parser_cpp", output)
+        self.assertIn("order_book_cpp", output)
+        self.assertIn("analytics_cpp", output)
 
 
 if __name__ == "__main__":
