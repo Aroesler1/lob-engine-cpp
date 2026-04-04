@@ -1,6 +1,9 @@
+#include "analytics_engine.h"
+#include "csv_exporter.h"
 #include "lobster_parser.h"
 #include "order_book.h"
 
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -11,11 +14,12 @@ namespace {
 
 struct Options {
     int top = 1;
+    std::string analytics_out;
     std::string input_path;
 };
 
 void printUsage(const char* program_name) {
-    std::cerr << "Usage: " << program_name << " [--top N] <lobster_csv>\n";
+    std::cerr << "Usage: " << program_name << " [--top N] [--analytics-out PATH] <lobster_csv>\n";
 }
 
 std::optional<Options> parseArgs(int argc, char** argv) {
@@ -33,6 +37,14 @@ std::optional<Options> parseArgs(int argc, char** argv) {
                 if (options.top <= 0) {
                     return std::nullopt;
                 }
+                continue;
+            }
+
+            if (arg == "--analytics-out") {
+                if (i + 1 >= argc) {
+                    return std::nullopt;
+                }
+                options.analytics_out = argv[++i];
                 continue;
             }
 
@@ -92,6 +104,12 @@ std::string formatTimestamp(double timestamp) {
     return output.str();
 }
 
+std::filesystem::path defaultAnalyticsOutputPath(const std::string& input_path) {
+    const std::filesystem::path input(input_path);
+    const std::string stem = input.stem().empty() ? std::string("analytics") : input.stem().string();
+    return std::filesystem::current_path() / (stem + "_analytics.csv");
+}
+
 void printBookLine(const LobsterMessage& msg, const OrderBook& book, int top_n) {
     if (top_n == 1) {
         const std::string best_bid = book.bids().empty()
@@ -127,8 +145,15 @@ int main(int argc, char** argv) {
     try {
         const auto messages = parseLobsterCsvFile(options->input_path);
         OrderBook book;
+        AnalyticsEngine analytics_engine;
+        const std::filesystem::path analytics_path = options->analytics_out.empty()
+            ? defaultAnalyticsOutputPath(options->input_path)
+            : std::filesystem::path(options->analytics_out);
+        CsvExporter exporter(analytics_path);
+
         for (const auto& message : messages) {
             book.processMessage(message);
+            exporter.write(analytics_engine.onMessage(message, book));
             printBookLine(message, book, options->top);
         }
         return 0;

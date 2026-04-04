@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(
     lobster_engine_lib
+    src/analytics_engine.cpp
+    src/csv_exporter.cpp
     src/lobster_parser.cpp
     src/order_book.cpp
 )
@@ -33,6 +35,11 @@ if(BUILD_TESTING)
 
     add_test(NAME order_book_cpp COMMAND order_book_tests)
 
+    add_executable(analytics_tests tests/test_analytics_engine.cpp)
+    target_link_libraries(analytics_tests PRIVATE lobster_engine_lib)
+    target_include_directories(analytics_tests PRIVATE ${CMAKE_SOURCE_DIR}/third_party)
+    add_test(NAME analytics_cpp COMMAND analytics_tests)
+
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(
         NAME order_book_python_integration
@@ -40,6 +47,15 @@ if(BUILD_TESTING)
     )
     set_tests_properties(
         order_book_python_integration
+        PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+
+    add_test(
+        NAME analytics_python_integration
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_analytics.py
+    )
+    set_tests_properties(
+        analytics_python_integration
         PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     )
 endif()
