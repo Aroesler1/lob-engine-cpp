@@ -1,2 +1,0 @@
-/usr/bin/ar qc liblob_parser.a CMakeFiles/lob_parser.dir/src/parser.cpp.o
-/usr/bin/ranlib liblob_parser.a
