@@ -29,6 +29,15 @@ target_link_libraries(lob_engine
         lob_parser
 )
 
+add_executable(lob_benchmark
+    benchmark/lob_benchmark.cpp
+)
+
+target_link_libraries(lob_benchmark
+    PRIVATE
+        lob_parser
+)
+
 add_executable(test_parser
     tests/test_parser.cpp
 )
