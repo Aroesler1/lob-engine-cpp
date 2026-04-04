@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(lob_parser
     src/parser.cpp
+    src/analytics.cpp
+    src/pipeline.cpp
 )
 
 target_include_directories(lob_parser
@@ -34,6 +36,24 @@ add_executable(test_parser
 )
 
 target_link_libraries(test_parser
+    PRIVATE
+        lob_parser
+)
+
+add_executable(run_benchmarks
+    benchmark/run_benchmarks.cpp
+)
+
+target_link_libraries(run_benchmarks
+    PRIVATE
+        lob_parser
+)
+
+add_executable(verify_correctness
+    benchmark/verify_correctness.cpp
+)
+
+target_link_libraries(verify_correctness
     PRIVATE
         lob_parser
 )

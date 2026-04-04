@@ -1,1 +1,0 @@
-/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/lob_engine.dir/link.d CMakeFiles/lob_engine.dir/src/main.cpp.o -o lob_engine  liblob_parser.a

@@ -1,0 +1,5 @@
+ticker,data_file,messages,malformed,identical
+AAPL,/tmp/workflow-worktrees/project_real_time_limit_order_book_engine_in_c_1775258936-codex-repo_feature_build-152-20260404-065554-upap9d18/data/AAPL_2012-06-21_34200000_57600000_message_1.csv,118497,0,true
+MSFT_synthetic,/tmp/workflow-worktrees/project_real_time_limit_order_book_engine_in_c_1775258936-codex-repo_feature_build-152-20260404-065554-upap9d18/data/MSFT_synthetic_message.csv,50000,0,true
+TSLA_synthetic,/tmp/workflow-worktrees/project_real_time_limit_order_book_engine_in_c_1775258936-codex-repo_feature_build-152-20260404-065554-upap9d18/data/TSLA_synthetic_message.csv,100000,0,true
+SPY_synthetic,/tmp/workflow-worktrees/project_real_time_limit_order_book_engine_in_c_1775258936-codex-repo_feature_build-152-20260404-065554-upap9d18/data/SPY_synthetic_message.csv,200000,0,true

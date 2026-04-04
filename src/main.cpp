@@ -1,48 +1,71 @@
-#include <array>
-#include <fstream>
+#include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <string>
-#include <vector>
 
-#include "lob/parser.hpp"
+#include "lob/analytics.hpp"
+#include "lob/pipeline.hpp"
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: lob_engine <lobster_csv_file>\n";
+    if (argc < 2 || argc > 6) {
+        std::cerr << "Usage: lob_engine <lobster_csv_file> [--container map|flat_vec] [--analytics-out path]\n";
         return 1;
     }
 
-    const std::string filepath = argv[1];
-    std::ifstream probe(filepath);
-    if (!probe.is_open()) {
-        std::cerr << "Could not open file: " << filepath << '\n';
+    std::string filepath;
+    std::string analytics_out;
+    lob::ContainerType container_type = lob::ContainerType::StdMap;
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--container" && i + 1 < argc) {
+            if (!lob::parse_container_type(argv[++i], container_type)) {
+                std::cerr << "Unknown container type: " << argv[i] << '\n';
+                return 1;
+            }
+            continue;
+        }
+        if (arg == "--analytics-out" && i + 1 < argc) {
+            analytics_out = argv[++i];
+            continue;
+        }
+        if (!filepath.empty()) {
+            std::cerr << "Unexpected argument: " << arg << '\n';
+            return 1;
+        }
+        filepath = arg;
+    }
+
+    if (filepath.empty()) {
+        std::cerr << "Missing lobster CSV file path\n";
         return 1;
     }
 
-    lob::LobsterParser parser;
-    const std::vector<lob::LobsterMessage> messages = parser.parse_file(filepath);
+    lob::PipelineOptions options{};
+    options.container_type = container_type;
+    options.store_analytics_rows = !analytics_out.empty();
 
-    std::array<std::size_t, 7> event_counts{};
-    for (const lob::LobsterMessage& message : messages) {
-        const std::size_t index = static_cast<std::size_t>(static_cast<int>(message.event_type) - 1);
-        ++event_counts[index];
-    }
-
-    std::cout << "Parsed: " << messages.size() << '\n';
-    std::cout << "Malformed: " << parser.malformed_count() << '\n';
-    if (messages.empty()) {
+    const lob::PipelineResult result = lob::run_pipeline_file(filepath, options);
+    std::cout << "Parsed: " << result.parsed_messages << '\n';
+    std::cout << "Malformed: " << result.malformed_messages << '\n';
+    if (result.parsed_messages == 0) {
         std::cout << "Time range: n/a\n";
     } else {
         std::cout << std::fixed << std::setprecision(6);
-        std::cout << "Time range: " << messages.front().timestamp << " - " << messages.back().timestamp << '\n';
+        std::cout << "Time range: " << result.first_timestamp << " - " << result.last_timestamp << '\n';
     }
 
-    std::cout << "Event type counts:";
-    for (std::size_t i = 0; i < event_counts.size(); ++i) {
-        std::cout << ' ' << (i + 1) << ':' << event_counts[i];
+    std::cout << "Container: " << lob::container_type_name(container_type) << '\n';
+    std::cout << "Peak active levels: " << result.peak_active_levels << '\n';
+    std::cout << "Final active orders: " << result.final_total_orders << '\n';
+
+    if (!analytics_out.empty()) {
+        if (!lob::write_analytics_csv_file(analytics_out, result.analytics_rows)) {
+            std::cerr << "Could not write analytics CSV: " << analytics_out << '\n';
+            return 1;
+        }
+        std::cout << "Analytics CSV: " << analytics_out << '\n';
     }
-    std::cout << '\n';
 
     return 0;
 }
