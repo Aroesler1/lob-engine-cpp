@@ -17,9 +17,9 @@ def executable_name(base_name: str) -> str:
     return f"{base_name}.exe" if os.name == "nt" else base_name
 
 
-def test_cmake_build_and_cpp_binaries():
+def test_cmake_build_and_cpp_binaries(tmp_path):
     repo_root = Path(__file__).resolve().parent.parent
-    build_dir = repo_root / "build"
+    build_dir = tmp_path / "build"
     sample_file = repo_root / "data" / "sample_messages.csv"
 
     run_command(["cmake", "-S", str(repo_root), "-B", str(build_dir)], cwd=repo_root)
