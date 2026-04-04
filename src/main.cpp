@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "lob/analytics.hpp"
 #include "lob/order_book.hpp"
 #include "lob/parser.hpp"
 #include "lob/replay.hpp"
@@ -16,12 +17,17 @@ namespace {
 struct CliOptions {
     std::string filepath;
     std::string backend_name{"map"};
-    std::size_t depth{5};
+    std::size_t depth{10};
     std::size_t repeats{1};
+    std::string analytics_out;
+    std::size_t trade_window_messages{1000};
+    double realized_vol_window_seconds{300.0};
 };
 
 void print_usage() {
-    std::cerr << "Usage: lob_engine <lobster_csv_file> [--backend map|flat|both] [--depth N] [--repeat N]\n";
+    std::cerr
+        << "Usage: lob_engine <lobster_csv_file> [--backend map|flat|both] [--depth N] [--repeat N] "
+           "[--analytics-out PATH] [--trade-window-messages N] [--realized-vol-window-seconds N]\n";
 }
 
 std::optional<std::size_t> parse_positive_size(const std::string& value) {
@@ -31,10 +37,23 @@ std::optional<std::size_t> parse_positive_size(const std::string& value) {
 
     char* end = nullptr;
     const unsigned long long parsed = std::strtoull(value.c_str(), &end, 10);
-    if (end == value.c_str() || *end != '\0') {
+    if (end == value.c_str() || *end != '\0' || parsed == 0) {
         return std::nullopt;
     }
     return static_cast<std::size_t>(parsed);
+}
+
+std::optional<double> parse_positive_double(const std::string& value) {
+    if (value.empty() || value.front() == '-') {
+        return std::nullopt;
+    }
+
+    char* end = nullptr;
+    const double parsed = std::strtod(value.c_str(), &end);
+    if (end == value.c_str() || *end != '\0' || parsed <= 0.0) {
+        return std::nullopt;
+    }
+    return parsed;
 }
 
 bool parse_args(int argc, char* argv[], CliOptions& options) {
@@ -78,6 +97,38 @@ bool parse_args(int argc, char* argv[], CliOptions& options) {
             continue;
         }
 
+        if (arg == "--analytics-out") {
+            if (index + 1 >= argc) {
+                return false;
+            }
+            options.analytics_out = argv[++index];
+            continue;
+        }
+
+        if (arg == "--trade-window-messages") {
+            if (index + 1 >= argc) {
+                return false;
+            }
+            const auto parsed = parse_positive_size(argv[++index]);
+            if (!parsed.has_value()) {
+                return false;
+            }
+            options.trade_window_messages = *parsed;
+            continue;
+        }
+
+        if (arg == "--realized-vol-window-seconds") {
+            if (index + 1 >= argc) {
+                return false;
+            }
+            const auto parsed = parse_positive_double(argv[++index]);
+            if (!parsed.has_value()) {
+                return false;
+            }
+            options.realized_vol_window_seconds = *parsed;
+            continue;
+        }
+
         return false;
     }
 
@@ -103,6 +154,17 @@ std::string format_level(const std::optional<lob::OrderBookLevel>& level) {
 
     return std::to_string(level->price) + " x " + std::to_string(level->total_size) +
            " (" + std::to_string(level->order_count) + ")";
+}
+
+std::string analytics_output_path(const std::string& base, lob::OrderBookBackend backend, bool multiple_backends) {
+    if (!multiple_backends) {
+        return base;
+    }
+    const std::size_t dot_index = base.find_last_of('.');
+    if (dot_index == std::string::npos) {
+        return base + "_" + std::string(lob::to_string(backend)) + ".csv";
+    }
+    return base.substr(0, dot_index) + "_" + std::string(lob::to_string(backend)) + base.substr(dot_index);
 }
 
 }  // namespace
@@ -151,10 +213,15 @@ int main(int argc, char* argv[]) {
     }
     std::cout << '\n';
 
+    lob::OrderBookBuildConfig build_config;
+    build_config.expected_orders = messages.size();
+    build_config.expected_levels_per_side = 64;
+    build_config.enable_preallocation = true;
+
     std::cout << std::fixed << std::setprecision(3);
     for (const lob::OrderBookBackend backend : backends) {
         const lob::ReplaySummary summary =
-            lob::benchmark_replay(messages, backend, options.depth, options.repeats);
+            lob::benchmark_replay(messages, backend, options.depth, options.repeats, build_config);
         std::cout << "Replay backend=" << lob::to_string(backend)
                   << " repeats=" << summary.repeats
                   << " processed=" << summary.processed_messages
@@ -163,6 +230,25 @@ int main(int argc, char* argv[]) {
         std::cout << "Final top: bid=" << format_level(summary.final_snapshot.best_bid)
                   << " ask=" << format_level(summary.final_snapshot.best_ask)
                   << " active_orders=" << summary.final_snapshot.active_order_count << '\n';
+
+        if (!options.analytics_out.empty()) {
+            std::unique_ptr<lob::OrderBook> book = lob::make_order_book(backend, build_config);
+            const std::vector<lob::AnalyticsRow> analytics_rows =
+                lob::replay_with_analytics(
+                    messages,
+                    *book,
+                    lob::AnalyticsConfig{
+                        options.trade_window_messages,
+                        options.realized_vol_window_seconds,
+                        std::max<std::size_t>(options.depth, 10),
+                    });
+            const std::string output_path = analytics_output_path(
+                options.analytics_out,
+                backend,
+                backends.size() > 1);
+            lob::write_analytics_csv(analytics_rows, output_path);
+            std::cout << "Analytics CSV=" << output_path << " rows=" << analytics_rows.size() << '\n';
+        }
     }
 
     return 0;

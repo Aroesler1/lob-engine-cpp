@@ -6,10 +6,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(CTest)
+enable_testing()
+
 add_library(lob_parser
     src/parser.cpp
     src/order_book.cpp
     src/replay.cpp
+    src/analytics.cpp
 )
 
 target_include_directories(lob_parser
@@ -56,4 +60,21 @@ add_executable(test_order_book
 target_link_libraries(test_order_book
     PRIVATE
         lob_parser
+)
+
+add_executable(test_analytics
+    tests/test_analytics.cpp
+)
+
+target_link_libraries(test_analytics
+    PRIVATE
+        lob_parser
+)
+
+add_test(NAME cpp_parser COMMAND test_parser)
+add_test(NAME cpp_order_book COMMAND test_order_book)
+add_test(NAME cpp_analytics COMMAND test_analytics)
+add_test(
+    NAME lob_benchmark_smoke
+    COMMAND lob_benchmark --dataset data/AAPL_sample_messages.csv --backend map --reserve on --depth 5 --repeat 1
 )

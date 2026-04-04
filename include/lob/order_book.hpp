@@ -25,6 +25,12 @@ struct BookSnapshot {
     std::optional<double> mid_price;
 };
 
+struct OrderBookBuildConfig {
+    std::size_t expected_orders{0};
+    std::size_t expected_levels_per_side{0};
+    bool enable_preallocation{true};
+};
+
 bool operator==(const BookSnapshot& lhs, const BookSnapshot& rhs) noexcept;
 
 class OrderBook {
@@ -43,7 +49,7 @@ public:
 
 class MapOrderBook final : public OrderBook {
 public:
-    MapOrderBook();
+    explicit MapOrderBook(OrderBookBuildConfig config = {});
     ~MapOrderBook() override;
 
     MapOrderBook(MapOrderBook&&) noexcept;
@@ -68,7 +74,7 @@ private:
 
 class FlatVectorOrderBook final : public OrderBook {
 public:
-    FlatVectorOrderBook();
+    explicit FlatVectorOrderBook(OrderBookBuildConfig config = {});
     ~FlatVectorOrderBook() override;
 
     FlatVectorOrderBook(FlatVectorOrderBook&&) noexcept;
@@ -91,7 +97,7 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-std::unique_ptr<OrderBook> make_order_book(OrderBookBackend backend);
+std::unique_ptr<OrderBook> make_order_book(OrderBookBackend backend, OrderBookBuildConfig config = {});
 
 const char* to_string(OrderBookBackend backend) noexcept;
 std::optional<OrderBookBackend> parse_order_book_backend(const std::string& value);

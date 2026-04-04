@@ -40,6 +40,8 @@ OrderBookLevel make_level(Price price, const LevelState& level_state) {
 template <typename Traits>
 class MapPriceLevels {
 public:
+    explicit MapPriceLevels(std::size_t = 0, bool = true) {}
+
     LevelState& find_or_create(Price price) {
         auto [it, inserted] = levels_.try_emplace(price, LevelState{});
         static_cast<void>(inserted);
@@ -97,6 +99,12 @@ private:
 template <typename Traits>
 class FlatPriceLevels {
 public:
+    explicit FlatPriceLevels(std::size_t reserve_hint = 0, bool enable_preallocation = true) {
+        if (enable_preallocation && reserve_hint > 0) {
+            levels_.reserve(reserve_hint);
+        }
+    }
+
     LevelState& find_or_create(Price price) {
         auto it = lower_bound(price);
         if (it == levels_.end() || it->first != price) {
@@ -176,6 +184,14 @@ private:
 template <typename BidLevels, typename AskLevels>
 class BasicOrderBookImpl {
 public:
+    explicit BasicOrderBookImpl(const OrderBookBuildConfig& config = {})
+        : bids_(config.expected_levels_per_side, config.enable_preallocation),
+          asks_(config.expected_levels_per_side, config.enable_preallocation) {
+        if (config.enable_preallocation && config.expected_orders > 0) {
+            orders_.reserve(config.expected_orders);
+        }
+    }
+
     void apply(const LobsterMessage& message) {
         switch (message.event_type) {
         case EventType::NewOrder:
@@ -370,9 +386,12 @@ bool operator==(const BookSnapshot& lhs, const BookSnapshot& rhs) noexcept {
            lhs.mid_price == rhs.mid_price;
 }
 
-class MapOrderBook::Impl : public MapOrderBookCore {};
+class MapOrderBook::Impl : public MapOrderBookCore {
+public:
+    explicit Impl(const OrderBookBuildConfig& config) : MapOrderBookCore(config) {}
+};
 
-MapOrderBook::MapOrderBook() : impl_(std::make_unique<Impl>()) {}
+MapOrderBook::MapOrderBook(OrderBookBuildConfig config) : impl_(std::make_unique<Impl>(config)) {}
 
 MapOrderBook::~MapOrderBook() = default;
 MapOrderBook::MapOrderBook(MapOrderBook&&) noexcept = default;
@@ -406,9 +425,12 @@ std::size_t MapOrderBook::active_order_count() const noexcept {
     return impl_->active_order_count();
 }
 
-class FlatVectorOrderBook::Impl : public FlatVectorOrderBookCore {};
+class FlatVectorOrderBook::Impl : public FlatVectorOrderBookCore {
+public:
+    explicit Impl(const OrderBookBuildConfig& config) : FlatVectorOrderBookCore(config) {}
+};
 
-FlatVectorOrderBook::FlatVectorOrderBook() : impl_(std::make_unique<Impl>()) {}
+FlatVectorOrderBook::FlatVectorOrderBook(OrderBookBuildConfig config) : impl_(std::make_unique<Impl>(config)) {}
 
 FlatVectorOrderBook::~FlatVectorOrderBook() = default;
 FlatVectorOrderBook::FlatVectorOrderBook(FlatVectorOrderBook&&) noexcept = default;
@@ -442,12 +464,12 @@ std::size_t FlatVectorOrderBook::active_order_count() const noexcept {
     return impl_->active_order_count();
 }
 
-std::unique_ptr<OrderBook> make_order_book(OrderBookBackend backend) {
+std::unique_ptr<OrderBook> make_order_book(OrderBookBackend backend, OrderBookBuildConfig config) {
     switch (backend) {
     case OrderBookBackend::Map:
-        return std::make_unique<MapOrderBook>();
+        return std::make_unique<MapOrderBook>(config);
     case OrderBookBackend::FlatVector:
-        return std::make_unique<FlatVectorOrderBook>();
+        return std::make_unique<FlatVectorOrderBook>(config);
     }
     return nullptr;
 }

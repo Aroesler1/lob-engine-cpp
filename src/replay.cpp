@@ -15,13 +15,14 @@ ReplaySummary benchmark_replay(
     const std::vector<LobsterMessage>& messages,
     OrderBookBackend backend,
     std::size_t depth,
-    std::size_t repeats) {
+    std::size_t repeats,
+    OrderBookBuildConfig config) {
     const std::size_t safe_repeats = repeats == 0 ? 1 : repeats;
     BookSnapshot final_snapshot;
 
     const auto start = std::chrono::steady_clock::now();
     for (std::size_t iteration = 0; iteration < safe_repeats; ++iteration) {
-        std::unique_ptr<OrderBook> book = make_order_book(backend);
+        std::unique_ptr<OrderBook> book = make_order_book(backend, config);
         replay_messages(messages, *book);
         if (iteration + 1 == safe_repeats) {
             final_snapshot = book->snapshot(depth);

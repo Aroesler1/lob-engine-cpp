@@ -23,6 +23,7 @@ ReplaySummary benchmark_replay(
     const std::vector<LobsterMessage>& messages,
     OrderBookBackend backend,
     std::size_t depth,
-    std::size_t repeats);
+    std::size_t repeats,
+    OrderBookBuildConfig config = {});
 
 }  // namespace lob
