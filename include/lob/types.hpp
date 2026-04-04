@@ -1,9 +1,16 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 
 namespace lob {
+
+using OrderId = std::int64_t;
+using Price = std::int64_t;
+using Quantity = std::int32_t;
+using AggregateQuantity = std::int64_t;
+using OrderCount = std::size_t;
 
 enum class Side {
     Buy,
@@ -23,18 +30,25 @@ enum class EventType : int {
 struct LobsterMessage {
     double timestamp;
     EventType event_type;
-    std::int64_t order_id;
-    std::int32_t size;
-    std::int64_t price;
+    OrderId order_id;
+    Quantity size;
+    Price price;
     Side direction;
 };
 
 struct OrderBookLevel {
-    std::int64_t price;
-    std::int32_t total_size;
-    std::int32_t order_count;
+    Price price;
+    AggregateQuantity total_size;
+    OrderCount order_count;
     Side side;
 };
+
+inline bool operator==(const OrderBookLevel& lhs, const OrderBookLevel& rhs) noexcept {
+    return lhs.price == rhs.price &&
+           lhs.total_size == rhs.total_size &&
+           lhs.order_count == rhs.order_count &&
+           lhs.side == rhs.side;
+}
 
 inline Side direction_to_side(int dir) {
     switch (dir) {
