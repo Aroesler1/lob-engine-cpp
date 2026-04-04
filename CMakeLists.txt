@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(CTest)
+
 add_library(lob_parser
     src/parser.cpp
 )
@@ -29,6 +31,15 @@ target_link_libraries(lob_engine
         lob_parser
 )
 
+add_executable(bench_orderbook
+    benchmark/bench_main.cpp
+)
+
+target_link_libraries(bench_orderbook
+    PRIVATE
+        lob_parser
+)
+
 add_executable(test_parser
     tests/test_parser.cpp
 )
@@ -37,3 +48,7 @@ target_link_libraries(test_parser
     PRIVATE
         lob_parser
 )
+
+if(BUILD_TESTING)
+    add_test(NAME cpp_test_parser COMMAND test_parser)
+endif()

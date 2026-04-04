@@ -1,0 +1,36 @@
+# AAPL Baseline Benchmark Results
+# Date: 2026-04-04
+# Compiler: c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+# Build type: Release (-O3 -DNDEBUG)
+# Data: Synthetic AAPL LOBSTER 10-level, 12000 messages
+# Hardware: Single-core, CI environment
+# Methodology: Pre-load all messages, warm up once, then timed sequential replay with auto-selected iterations for timer stability
+# Configurations: (1) with analytics, (2) without analytics
+
+## With analytics
+Data file: "/tmp/workflow-worktrees/project_real_time_limit_order_book_engine_in_c_1775258936-codex-repo_feature_build-148-20260404-061429-10_lzy4w/data/AAPL_2024-01-02_message_10.csv"
+Messages per iteration: 12000
+Timed iterations: 1667
+Messages processed: 20004000
+Malformed while loading: 0
+Elapsed time: 0.155566 s
+Throughput: 128588110.64 msgs/s
+Analytics enabled: yes
+CSV export enabled: no
+Checksum: 2876893091008091576
+Time range: 34200.002168 - 34290.979848
+Total size across timed iterations: 3845769000
+Total notional across timed iterations (price x 10000): 5769293702348200
+Event counts across timed iterations: 1:11290591 2:3148963 3:1667000 4:2787224 5:1110222 6:0 7:0
+
+## Without analytics
+Data file: "/tmp/workflow-worktrees/project_real_time_limit_order_book_engine_in_c_1775258936-codex-repo_feature_build-148-20260404-061429-10_lzy4w/data/AAPL_2024-01-02_message_10.csv"
+Messages per iteration: 12000
+Timed iterations: 1667
+Messages processed: 20004000
+Malformed while loading: 0
+Elapsed time: 0.160601 s
+Throughput: 124557485.16 msgs/s
+Analytics enabled: no
+CSV export enabled: no
+Checksum: 2876893091008091576
