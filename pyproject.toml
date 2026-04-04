@@ -1,0 +1,8 @@
+[project]
+name = "project_real_time_limit_order_book_engine_in_c_1775258936"
+version = "0.1.0"
+description = "Generated project workspace"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
