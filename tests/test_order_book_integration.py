@@ -12,6 +12,7 @@ class OrderBookIntegrationTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir) / "build"
+            analytics_out = Path(tmpdir) / "sample_analytics.csv"
 
             configure = subprocess.run(
                 ["cmake", "-S", str(repo_root), "-B", str(build_dir)],
@@ -31,13 +32,14 @@ class OrderBookIntegrationTest(unittest.TestCase):
 
             cli = build_dir / "lobster_cli"
             run = subprocess.run(
-                [str(cli), str(sample_file)],
+                [str(cli), "--analytics-out", str(analytics_out), str(sample_file)],
                 capture_output=True,
                 text=True,
                 check=False,
             )
 
             self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertTrue(analytics_out.exists())
 
             bbo_lines = [line for line in run.stdout.splitlines() if "BBO:" in line]
             self.assertGreaterEqual(len(bbo_lines), 10)
