@@ -1,18 +1,52 @@
 # Benchmark Report
 
-This report captures reproducible replay benchmarks from a clean checkout of the repository after the analytics/export and preallocation work landed.
+This document is a hand-maintained reproducibility note for the replay benchmark harness. The repository does not track generated benchmark outputs, build trees, or machine-specific report artifacts.
 
-## Reproduction
+## Fixture scope
+
+The checked-in CSV files are reduced reproducibility fixtures that match the LOBSTER message schema, not full proprietary LOBSTER distributions.
+
+| Dataset | Purpose | Rows on disk | Parsed rows | Malformed rows |
+| --- | --- | ---: | ---: | ---: |
+| `data/AAPL_sample_messages.csv` | Reduced AAPL-like benchmark fixture | 25 | 20 | 5 |
+| `data/MSFT_sample_messages.csv` | Reduced MSFT-like benchmark fixture | 25 | 20 | 5 |
+| `data/NVDA_sample_messages.csv` | Reduced NVDA-like benchmark fixture | 25 | 20 | 5 |
+| `data/TSLA_sample_messages.csv` | Reduced TSLA-like benchmark fixture | 25 | 20 | 5 |
+| `data/sample_messages.csv` | Legacy parser/integration-test alias of the AAPL fixture | 25 | 20 | 5 |
+
+The fixtures intentionally include malformed rows so parser error accounting is exercised during correctness checks. They also include obviously synthetic values, so benchmark output should be interpreted only as a local engineering signal for this repository, not as a publishable claim about full proprietary datasets.
+
+## Fresh-clone sequence
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
-./build/lob_benchmark --dataset data/AAPL_sample_messages.csv --backend both --reserve both --depth 5 --repeat 200000
-./build/lob_benchmark --dataset data/MSFT_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
-./build/lob_benchmark --dataset data/NVDA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
-./build/lob_benchmark --dataset data/TSLA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+build_dir="$(mktemp -d "${TMPDIR:-/tmp}/lob-engine-build.XXXXXX")"
+cmake -S . -B "$build_dir" -DCMAKE_BUILD_TYPE=Release
+cmake --build "$build_dir" --config Release
+ctest --test-dir "$build_dir" --output-on-failure -C Release
+python -m pytest tests -q --tb=short
+"$build_dir/lob_benchmark" --dataset data/AAPL_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/MSFT_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/NVDA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/TSLA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
 ```
+
+`ctest` covers the C++ test executables plus a smoke run of `lob_benchmark`. `python -m pytest tests -q --tb=short` reruns the existing Python integration suite, which configures and reuses a separate `.cmake-test-build/` directory under the repo root and emits local analytics CSV byproducts there.
+
+## Benchmark commands
+
+```bash
+"$build_dir/lob_benchmark" --dataset data/AAPL_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/MSFT_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/NVDA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/TSLA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+```
+
+Each command prints:
+
+- parsed and malformed row counts
+- throughput for `map` and `flat_vector`
+- reserve `off` and `on`
+- final top-of-book snapshot for a quick sanity check
 
 ## Scope
 
@@ -21,58 +55,6 @@ ctest --test-dir build --output-on-failure
 - backends compared: `std::map` and flat sorted `std::vector`
 - allocation mode compared: reserve/preallocation `off` vs `on`
 
-## Results
+## Report regeneration
 
-### AAPL sample
-
-| Backend | Reserve | Throughput msgs/s | Avg ns/msg |
-| --- | --- | ---: | ---: |
-| map | off | 55,621,183 | 17.979 |
-| flat | off | 59,151,913 | 16.906 |
-| map | on | 57,645,505 | 17.347 |
-| flat | on | 56,307,627 | 17.760 |
-
-Takeaway: on the checked-in AAPL sample, `flat` wins without reserve, while `map` slightly benefits from preallocation.
-
-### MSFT sample
-
-| Backend | Reserve | Throughput msgs/s | Avg ns/msg |
-| --- | --- | ---: | ---: |
-| map | off | 29,049,272 | 34.424 |
-| flat | off | 55,216,799 | 18.110 |
-| map | on | 51,246,182 | 19.514 |
-| flat | on | 49,013,940 | 20.402 |
-
-Takeaway: the reserve hint materially improves the `map` path on this sample and narrows the gap to the flat-vector backend.
-
-### NVDA sample
-
-| Backend | Reserve | Throughput msgs/s | Avg ns/msg |
-| --- | --- | ---: | ---: |
-| map | off | 46,925,367 | 21.310 |
-| flat | off | 54,675,249 | 18.290 |
-| map | on | 53,910,207 | 18.549 |
-| flat | on | 45,742,321 | 21.862 |
-
-Takeaway: preallocation helps the `map` backend more than the flat-vector backend on this sample.
-
-### TSLA sample
-
-| Backend | Reserve | Throughput msgs/s | Avg ns/msg |
-| --- | --- | ---: | ---: |
-| map | off | 55,859,805 | 17.902 |
-| flat | off | 57,432,210 | 17.412 |
-| map | on | 55,976,073 | 17.865 |
-| flat | on | 52,862,960 | 18.917 |
-
-Takeaway: the two container choices are close on the TSLA sample, with flat-vector slightly ahead without reserve.
-
-## Interpretation
-
-- The flat-vector backend can outperform `std::map` on these shallow sample books because the active level count stays low and the contiguous representation is cache-friendly.
-- Reserve/preallocation mainly helps the order-ID `unordered_map` and removes some rehash churn on the replay path.
-- The effect is workload-dependent. There is no single winner across every sample dataset, which is exactly why both container choices are kept in the repo and exposed through the same interface.
-
-## Important note
-
-The checked-in datasets are intentionally tiny reproducibility samples, not large production LOBSTER files. These numbers should be treated as relative engineering signals for this repo, not as final claims about live-market performance.
+There is no checked-in script that rewrites this file. To refresh the report, rerun the build, verifier, and benchmark commands above, then update this markdown manually with any observations you want to preserve.

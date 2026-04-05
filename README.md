@@ -1,6 +1,6 @@
 # Real-Time Limit Order Book Engine in C++
 
-This repository implements a small, deterministic C++ limit-order-book engine for LOBSTER-style message data. It includes:
+This repository implements a small, deterministic C++ limit-order-book engine for LOBSTER-style message data. The parser and replay code operate on the LOBSTER six-column message schema, but the checked-in CSVs are tiny synthetic/reduced fixtures for reproducibility, not full proprietary LOBSTER distributions. The repo includes:
 
 - typed CSV ingestion for LOBSTER message rows
 - order lifecycle processing for add, cancel, and execute events
@@ -8,7 +8,7 @@ This repository implements a small, deterministic C++ limit-order-book engine fo
 - two price-level backends: `std::map` and flat sorted `std::vector`
 - rolling analytics and CSV export after every processed message
 - deterministic C++ and Python integration tests
-- replay benchmark tooling and a checked-in benchmark report
+- replay benchmark tooling and a hand-maintained benchmark reproducibility note
 
 ## Repository layout
 
@@ -19,29 +19,42 @@ This repository implements a small, deterministic C++ limit-order-book engine fo
 - `data/`: checked-in small sample datasets used for deterministic tests and reproducible benchmark captures
 - `report/`: benchmark and methodology notes
 
-## Build
+## Reproducible build
+
+From a fresh clone, run the build, verifier, and benchmark commands below in order. Start with a clean temporary build directory instead of an in-repo build tree:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
+build_dir="$(mktemp -d "${TMPDIR:-/tmp}/lob-engine-build.XXXXXX")"
+cmake -S . -B "$build_dir" -DCMAKE_BUILD_TYPE=Release
+cmake --build "$build_dir" --config Release
 ```
+
+## Correctness verification
+
+Run the CMake/CTest verifier from that build directory, then run the existing Python test suite from the repo root:
+
+```bash
+ctest --test-dir "$build_dir" --output-on-failure -C Release
+python -m pytest tests -q --tb=short
+```
+
+`ctest` runs the three C++ test executables plus the `lob_benchmark_smoke` path. `python -m pytest tests -q --tb=short` configures and reuses a separate `.cmake-test-build/` directory under the repo root; that directory and the analytics CSVs produced there are ignored local test artifacts.
 
 ## CLI usage
 
 Replay a dataset and print final top-of-book state:
 
 ```bash
-./build/lob_engine data/AAPL_sample_messages.csv --backend both --depth 10 --repeat 5
+"$build_dir/lob_engine" data/AAPL_sample_messages.csv --backend both --depth 10 --repeat 5
 ```
 
 Export analytics rows after every processed message:
 
 ```bash
-./build/lob_engine \
+"$build_dir/lob_engine" \
   data/AAPL_sample_messages.csv \
   --backend both \
-  --analytics-out build/analytics.csv \
+  --analytics-out "$build_dir/analytics.csv" \
   --trade-window-messages 1000 \
   --realized-vol-window-seconds 300
 ```
@@ -81,15 +94,13 @@ Deterministic parity tests assert that both backends produce identical book snap
 
 ## Benchmarking
 
-The benchmark harness focuses on replay throughput and simple preallocation effects:
+The benchmark harness focuses on replay throughput and simple preallocation effects on the checked-in reduced fixtures. These four commands are the final step in the fresh-clone verification sequence documented above:
 
 ```bash
-./build/lob_benchmark \
-  --dataset data/AAPL_sample_messages.csv \
-  --backend both \
-  --reserve both \
-  --depth 5 \
-  --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/AAPL_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/MSFT_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/NVDA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+"$build_dir/lob_benchmark" --dataset data/TSLA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
 ```
 
 What the benchmark compares:
@@ -102,20 +113,21 @@ What the benchmark compares:
 - `unordered_map::reserve()` for order lookup
 - vector capacity reservation for the flat backend
 
-This is the bounded hot-path allocation reduction implemented in the repo. The benchmark report records the measured effect on the checked-in sample datasets.
-
-On a fresh build of this repository on a 4-core AMD EPYC-Rome VM, the fastest AAPL replay configuration processed `60.1 million messages/second` with the flat-vector backend and reserve disabled.
+This is the bounded hot-path allocation reduction implemented in the repo. Throughput numbers are host-dependent and should be treated as local measurements on the checked-in reduced fixtures, not as publishable claims about full vendor datasets. See `report/benchmark_report.md` for the exact datasets and commands used for reproducible reruns.
 
 ## Dataset note
 
-The repo ships small checked-in reproducibility datasets:
+The repo ships five checked-in reproducibility fixtures:
 
 - `AAPL_sample_messages.csv`
 - `MSFT_sample_messages.csv`
 - `NVDA_sample_messages.csv`
 - `TSLA_sample_messages.csv`
+- `sample_messages.csv`
 
-They are intentionally tiny and deterministic so the build, tests, and benchmark report can run in CI or on a fresh clone without external data dependencies. They are suitable for correctness checks and relative replay comparisons, not production-grade market simulation.
+The four ticker-named files are 25-line reduced fixtures with 20 valid messages plus 5 intentionally malformed rows each. `sample_messages.csv` is a legacy generic fixture with the same contents as `AAPL_sample_messages.csv`, kept because the parser and Python integration tests reference it directly.
+
+These files are intentionally tiny and deterministic so the build, tests, and benchmark workflow can run on a fresh clone without external data dependencies. They are suitable for correctness checks and relative replay comparisons, not production-grade market simulation or claims about full vendor data.
 
 ## Why this is useful for quant / HFT workflows
 
