@@ -94,24 +94,58 @@ Deterministic parity tests assert that both backends produce identical book snap
 
 ## Benchmarking
 
-The benchmark harness focuses on replay throughput and simple preallocation effects on the checked-in reduced fixtures. These four commands are the final step in the fresh-clone verification sequence documented above:
+The checked-in benchmark numbers below come from the existing `lob_benchmark` replay harness in `Release` mode. The timer still covers replay/book updates, not CSV export. Analytics correctness and backend parity stay covered by `test_analytics`, and the CLI analytics path now shares the same derived book reserve hints plus pre-sized rolling buffers.
+
+Exact hot-path allocation changes in this branch:
+
+- derive `expected_orders` from the peak active-order count in the parsed message stream before replay instead of hard-coding `messages.size()`
+- derive `expected_levels_per_side` from the peak active bid/ask level count instead of hard-coding `64`
+- pre-size the rolling trade window and realized-vol sample buffer in analytics, and retain that capacity across `AnalyticsEngine::reset()`
+- construct `AnalyticsRow` values in place during replay instead of pushing a temporary row object per message
+
+Measurement method used for the recorded table:
+
+- baseline tree: clean `origin/main` checkout at `d627b73`
+- optimized tree: this worktree after the reserve/buffer changes below
+- build: `cmake -S . -B "$build_dir" -DCMAKE_BUILD_TYPE=Release && cmake --build "$build_dir" --config Release`
+- warmup: one untimed `taskset -c 0 "$build_dir/lob_benchmark" --dataset data/AAPL_sample_messages.csv --backend both --reserve on --depth 5 --repeat 10000`
+- measured commands: the four `taskset -c 0 "$build_dir/lob_benchmark" --dataset ... --backend both --reserve on --depth 5 --repeat 100000` invocations listed below
+- host: Linux 6.8.0-106-generic, `g++ 13.3.0`, AMD EPYC-Rome Processor, benchmark process pinned to CPU 0
+
+These four commands are the recorded measurement step:
 
 ```bash
-"$build_dir/lob_benchmark" --dataset data/AAPL_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
-"$build_dir/lob_benchmark" --dataset data/MSFT_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
-"$build_dir/lob_benchmark" --dataset data/NVDA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
-"$build_dir/lob_benchmark" --dataset data/TSLA_sample_messages.csv --backend both --reserve both --depth 5 --repeat 100000
+taskset -c 0 "$build_dir/lob_benchmark" --dataset data/AAPL_sample_messages.csv --backend both --reserve on --depth 5 --repeat 100000
+taskset -c 0 "$build_dir/lob_benchmark" --dataset data/MSFT_sample_messages.csv --backend both --reserve on --depth 5 --repeat 100000
+taskset -c 0 "$build_dir/lob_benchmark" --dataset data/NVDA_sample_messages.csv --backend both --reserve on --depth 5 --repeat 100000
+taskset -c 0 "$build_dir/lob_benchmark" --dataset data/TSLA_sample_messages.csv --backend both --reserve on --depth 5 --repeat 100000
 ```
 
-What the benchmark compares:
+On the optimized tree, `lob_benchmark` now prints the derived reserve hints alongside each run. For the four checked-in ticker fixtures, the derived replay hints are `expected_orders=3` and `expected_levels_per_side=3`.
 
-- `map` vs `flat`
-- reserve/preallocation `off` vs `on`
+Recorded throughput on this host:
+
+| Dataset | Backend | Baseline elapsed ms | Baseline msgs/sec | Optimized elapsed ms | Optimized msgs/sec | Delta |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `AAPL` | `map` | 39.272 | 50,926,679.688 | 32.665 | 61,228,168.484 | +20.23% |
+| `AAPL` | `flat_vector` | 36.477 | 54,829,135.007 | 30.653 | 65,245,476.645 | +19.00% |
+| `MSFT` | `map` | 34.837 | 57,409,888.578 | 33.477 | 59,743,302.149 | +4.06% |
+| `MSFT` | `flat_vector` | 36.481 | 54,822,944.367 | 30.856 | 64,816,866.749 | +18.23% |
+| `NVDA` | `map` | 37.224 | 53,729,301.089 | 33.445 | 59,799,408.267 | +11.30% |
+| `NVDA` | `flat_vector` | 37.173 | 53,801,878.832 | 32.955 | 60,689,226.916 | +12.80% |
+| `TSLA` | `map` | 34.614 | 57,780,646.523 | 33.194 | 60,252,569.734 | +4.28% |
+| `TSLA` | `flat_vector` | 36.451 | 54,868,240.915 | 31.245 | 64,010,909.507 | +16.66% |
+
+Post-optimization backend comparison on these fixtures:
+
+- `flat_vector` remains faster than `map` on all four reduced ticker fixtures after the change: +6.56% on `AAPL`, +8.49% on `MSFT`, +1.49% on `NVDA`, and +6.24% on `TSLA`
+- the margin stays narrow because these fixtures top out at three active orders and three active levels per side after malformed rows are dropped
+- these numbers are local measurements on tiny synthetic fixtures; do not generalize them to deeper books or proprietary full-session datasets
 
 `--reserve on` enables:
 
-- `unordered_map::reserve()` for order lookup
-- vector capacity reservation for the flat backend
+- auto-derived `unordered_map::reserve()` sizing for order lookup
+- auto-derived vector capacity reservation for the flat backend price-level storage
 
 This is the bounded hot-path allocation reduction implemented in the repo. Throughput numbers are host-dependent and should be treated as local measurements on the checked-in reduced fixtures, not as publishable claims about full vendor datasets. See `report/benchmark_report.md` for the exact datasets and commands used for reproducible reruns.
 

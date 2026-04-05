@@ -183,9 +183,11 @@ int main(int argc, char* argv[]) {
 
     for (bool enable_preallocation : reserve_modes) {
         lob::OrderBookBuildConfig build_config;
-        build_config.expected_orders = messages.size();
-        build_config.expected_levels_per_side = 64;
         build_config.enable_preallocation = enable_preallocation;
+        build_config = lob::derive_order_book_build_config(messages, build_config);
+        std::cout << "Reserve hints reserve=" << (enable_preallocation ? "on" : "off")
+                  << " expected_orders=" << build_config.expected_orders
+                  << " expected_levels_per_side=" << build_config.expected_levels_per_side << '\n';
 
         for (const lob::OrderBookBackend backend : backends) {
             const lob::ReplaySummary summary = lob::benchmark_replay(

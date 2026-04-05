@@ -15,6 +15,7 @@ struct AnalyticsConfig {
     std::size_t trade_window_messages{1000};
     double realized_vol_window_seconds{300.0};
     std::size_t depth_levels{10};
+    std::size_t expected_messages{0};
 };
 
 struct AnalyticsRow {
@@ -47,6 +48,7 @@ public:
     AnalyticsEngine& operator=(const AnalyticsEngine&) = delete;
 
     AnalyticsRow on_message(const LobsterMessage& message, const BookSnapshot& snapshot);
+    void on_message(const LobsterMessage& message, const BookSnapshot& snapshot, AnalyticsRow& row);
     void reset();
 
 private:
