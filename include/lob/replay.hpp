@@ -17,6 +17,10 @@ struct ReplaySummary {
     BookSnapshot final_snapshot;
 };
 
+OrderBookBuildConfig derive_order_book_build_config(
+    const std::vector<LobsterMessage>& messages,
+    OrderBookBuildConfig config = {});
+
 void replay_messages(const std::vector<LobsterMessage>& messages, OrderBook& book);
 
 ReplaySummary benchmark_replay(

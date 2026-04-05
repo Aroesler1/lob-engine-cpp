@@ -214,9 +214,8 @@ int main(int argc, char* argv[]) {
     std::cout << '\n';
 
     lob::OrderBookBuildConfig build_config;
-    build_config.expected_orders = messages.size();
-    build_config.expected_levels_per_side = 64;
     build_config.enable_preallocation = true;
+    build_config = lob::derive_order_book_build_config(messages, build_config);
 
     std::cout << std::fixed << std::setprecision(3);
     for (const lob::OrderBookBackend backend : backends) {
@@ -241,6 +240,7 @@ int main(int argc, char* argv[]) {
                         options.trade_window_messages,
                         options.realized_vol_window_seconds,
                         std::max<std::size_t>(options.depth, 10),
+                        messages.size(),
                     });
             const std::string output_path = analytics_output_path(
                 options.analytics_out,
