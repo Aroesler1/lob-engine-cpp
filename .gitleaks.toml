@@ -1,0 +1,11 @@
+# managed by workflow os: gitleaks-config
+title = "workflow managed secret scan configuration"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "openclaw-auth-token"
+description = "OpenClaw auth or gateway token"
+regex = '''(?i)(?:OPENCLAW_(?:AUTH|GATEWAY|API)_TOKEN|openclaw(?:[_-]?(?:auth|gateway|api))?[_-]?token)[^\n]{0,32}[=:][^\S\r\n]*["']?[A-Za-z0-9._\-]{12,}["']?'''
+keywords = ["openclaw", "OPENCLAW_"]

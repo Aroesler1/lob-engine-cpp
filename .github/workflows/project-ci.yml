@@ -1,0 +1,88 @@
+# managed by workflow os: project-ci
+name: project-ci
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project-ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Go
+        if: ${{ hashFiles('go.mod') != '' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Set up Rust
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run project CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          ran_any=0
+
+          if [[ -f pyproject.toml || -f setup.py || -f requirements.txt || -d tests ]]; then
+            python -m pip install --upgrade pip
+            if [[ -f requirements.txt ]]; then python -m pip install -r requirements.txt; fi
+            if [[ -f requirements-dev.txt ]]; then python -m pip install -r requirements-dev.txt; fi
+            python -m pip install pytest
+            if [[ -f pyproject.toml || -f setup.py ]]; then python -m pip install -e . || true; fi
+            if [[ -d tests ]]; then
+              python -m pytest tests -q --tb=short
+              ran_any=1
+            fi
+          fi
+
+          if [[ -f package.json ]]; then
+            if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
+            if npm run | grep -qE '(^|[[:space:]])test([[:space:]]|$)'; then
+              npm test -- --runInBand || npm test
+              ran_any=1
+            fi
+          fi
+
+          if [[ -f go.mod ]]; then
+            go test ./...
+            ran_any=1
+          fi
+
+          if [[ -f Cargo.toml ]]; then
+            cargo test --all-targets --all-features
+            ran_any=1
+          fi
+
+          if [[ -f CMakeLists.txt ]]; then
+            sudo apt-get update
+            sudo apt-get install -y cmake ninja-build
+            cmake -S . -B build -G Ninja
+            cmake --build build
+            ctest --test-dir build --output-on-failure
+            ran_any=1
+          fi
+
+          if [[ "$ran_any" -eq 0 ]]; then
+            echo "No recognized project CI harness found; passing as metadata-only repo."
+          fi
