@@ -7,6 +7,7 @@ This repository implements a small, deterministic C++ limit-order-book engine fo
 - aggregated bid/ask levels plus order-ID lookup
 - two price-level backends: `std::map` and flat sorted `std::vector`
 - rolling analytics and CSV export after every processed message
+- optional post-replay prediction summary reporting by message horizon
 - deterministic C++ and Python integration tests
 - replay benchmark tooling and a hand-maintained benchmark reproducibility note
 
@@ -61,6 +62,19 @@ Export analytics rows after every processed message:
 
 If `--backend both` is selected, the CLI writes one CSV per backend by suffixing the output path.
 
+Emit a separate prediction summary after replay without changing the analytics CSV rows:
+
+```bash
+"$build_dir/lob_engine" \
+  data/AAPL_sample_messages.csv \
+  --backend map \
+  --analytics-out "$build_dir/analytics.csv" \
+  --prediction-report-out "$build_dir/prediction_report.csv" \
+  --prediction-horizons 100,500
+```
+
+`--prediction-report-out` requires `--prediction-horizons`. If both flags are omitted, prediction work stays disabled.
+
 ## Analytics
 
 Each processed message produces a row with:
@@ -77,6 +91,8 @@ The default rolling windows match the project objective:
 
 - trailing `1000` messages for trade-based metrics
 - trailing `300` seconds for realized volatility
+
+Prediction reporting is a separate CSV keyed by message horizon. For each row `t`, the label is the sign of the first non-zero mid-price move found in `t+1 ... t+H` relative to mid at `t`. Rows with invalid current mid or no non-zero future move inside the horizon are skipped. The report includes labeled sample counts, up/down move counts, hit rate from `sign(order_imbalance_top5)` on non-zero-signal rows, and information coefficient computed as the Pearson correlation between the raw top-5 imbalance value and the future move sign. Zero-signal rows stay in the labeled sample and IC calculation but increment `skipped_zero_signal` so they are excluded from the hit-rate denominator.
 
 ## Backends
 

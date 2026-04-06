@@ -28,6 +28,46 @@ bool is_trade_event(EventType event_type) noexcept {
            event_type == EventType::CrossTrade;
 }
 
+int sign_of(double value) noexcept {
+    return (value > 0.0) - (value < 0.0);
+}
+
+class RunningPearsonCorrelation {
+public:
+    void observe(double x, double y) noexcept {
+        ++count_;
+        sum_x_ += x;
+        sum_y_ += y;
+        sum_xy_ += x * y;
+        sum_x2_ += x * x;
+        sum_y2_ += y * y;
+    }
+
+    double value() const noexcept {
+        if (count_ < 2) {
+            return 0.0;
+        }
+
+        const double count = static_cast<double>(count_);
+        const double numerator = count * sum_xy_ - (sum_x_ * sum_y_);
+        const double variance_x = count * sum_x2_ - (sum_x_ * sum_x_);
+        const double variance_y = count * sum_y2_ - (sum_y_ * sum_y_);
+        if (variance_x <= 0.0 || variance_y <= 0.0) {
+            return 0.0;
+        }
+
+        return numerator / std::sqrt(variance_x * variance_y);
+    }
+
+private:
+    std::size_t count_{0};
+    double sum_x_{0.0};
+    double sum_y_{0.0};
+    double sum_xy_{0.0};
+    double sum_x2_{0.0};
+    double sum_y2_{0.0};
+};
+
 template <typename T>
 void write_optional(std::ofstream& output, const std::optional<T>& value) {
     if (value.has_value()) {
@@ -91,6 +131,113 @@ private:
     std::vector<T> values_;
     std::size_t start_index_{0};
 };
+
+std::optional<int> first_future_label(
+    const std::vector<PredictionSnapshot>& snapshots,
+    std::size_t message_index,
+    std::size_t horizon) {
+    if (message_index >= snapshots.size() || !snapshots[message_index].mid_price.has_value()) {
+        return std::nullopt;
+    }
+
+    const double current_mid = *snapshots[message_index].mid_price;
+    const std::size_t end_index = std::min(snapshots.size(), message_index + horizon + 1);
+    for (std::size_t future_index = message_index + 1; future_index < end_index; ++future_index) {
+        if (!snapshots[future_index].mid_price.has_value()) {
+            continue;
+        }
+
+        const int move_sign = sign_of(*snapshots[future_index].mid_price - current_mid);
+        if (move_sign != 0) {
+            return move_sign;
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::vector<std::size_t> validate_prediction_horizons(const std::vector<int>& horizons) {
+    std::vector<std::size_t> validated;
+    validated.reserve(horizons.size());
+    for (const int horizon : horizons) {
+        if (horizon <= 0) {
+            throw std::invalid_argument("Prediction horizons must be positive");
+        }
+        validated.push_back(static_cast<std::size_t>(horizon));
+    }
+    return validated;
+}
+
+std::vector<PredictionSummaryRow> summarize_prediction_horizons_impl(
+    const std::vector<PredictionSnapshot>& snapshots,
+    const std::vector<std::size_t>& horizons) {
+    std::vector<PredictionSummaryRow> summaries;
+    summaries.reserve(horizons.size());
+
+    for (const std::size_t horizon : horizons) {
+        if (horizon == 0) {
+            throw std::invalid_argument("Prediction horizons must be positive");
+        }
+
+        PredictionSummaryRow summary;
+        RunningPearsonCorrelation information_coefficient;
+        summary.horizon_messages = horizon;
+        summary.total_rows_seen = snapshots.size();
+
+        for (std::size_t index = 0; index < snapshots.size(); ++index) {
+            const PredictionSnapshot& snapshot = snapshots[index];
+            if (!snapshot.mid_price.has_value()) {
+                ++summary.skipped_no_valid_mid;
+                continue;
+            }
+
+            ++summary.eligible_rows_with_valid_mid;
+            const std::optional<int> label = first_future_label(snapshots, index, horizon);
+            if (!label.has_value()) {
+                ++summary.skipped_no_future_move_within_horizon;
+                continue;
+            }
+
+            ++summary.labeled_rows;
+            if (*label > 0) {
+                ++summary.up_moves;
+            } else if (*label < 0) {
+                ++summary.down_moves;
+            }
+
+            if (snapshot.order_imbalance_top5.has_value()) {
+                information_coefficient.observe(*snapshot.order_imbalance_top5, static_cast<double>(*label));
+            }
+
+            const int signal_sign = snapshot.order_imbalance_top5.has_value()
+                ? sign_of(*snapshot.order_imbalance_top5)
+                : 0;
+            if (signal_sign == 0) {
+                ++summary.skipped_zero_signal;
+                continue;
+            }
+
+            if (signal_sign == *label) {
+                ++summary.correct_predictions;
+            } else {
+                ++summary.incorrect_predictions;
+            }
+        }
+
+        const std::size_t directional_observations = summary.correct_predictions + summary.incorrect_predictions;
+        summary.hit_rate = directional_observations > 0
+            ? static_cast<double>(summary.correct_predictions) / static_cast<double>(directional_observations)
+            : 0.0;
+        summary.information_coefficient = information_coefficient.value();
+        summary.coverage_vs_total = summary.total_rows_seen > 0
+            ? static_cast<double>(summary.labeled_rows) / static_cast<double>(summary.total_rows_seen)
+            : 0.0;
+
+        summaries.push_back(summary);
+    }
+
+    return summaries;
+}
 
 }  // namespace
 
@@ -280,6 +427,68 @@ void write_analytics_csv(const std::vector<AnalyticsRow>& rows, const std::strin
         output << ',';
         write_optional(output, row.rolling_realized_vol);
         output << '\n';
+    }
+}
+
+std::vector<PredictionSnapshot> collect_prediction_snapshots(const std::vector<AnalyticsRow>& rows) {
+    std::vector<PredictionSnapshot> snapshots;
+    snapshots.reserve(rows.size());
+    for (std::size_t index = 0; index < rows.size(); ++index) {
+        snapshots.push_back(PredictionSnapshot{
+            index,
+            rows[index].mid_price,
+            rows[index].order_imbalance,
+        });
+    }
+    return snapshots;
+}
+
+std::vector<PredictionSummaryRow> summarize_prediction_horizons(
+    const std::vector<PredictionSnapshot>& snapshots,
+    const std::vector<std::size_t>& horizons) {
+    return summarize_prediction_horizons_impl(snapshots, horizons);
+}
+
+std::vector<PredictionSummaryRow> summarize_prediction_horizons(
+    const std::vector<PredictionSnapshot>& snapshots,
+    const std::vector<int>& horizons) {
+    return summarize_prediction_horizons_impl(snapshots, validate_prediction_horizons(horizons));
+}
+
+std::vector<PredictionSummaryRow> summarize_prediction_horizons(
+    const std::vector<PredictionSnapshot>& snapshots,
+    std::initializer_list<int> horizons) {
+    return summarize_prediction_horizons(snapshots, std::vector<int>(horizons));
+}
+
+void write_prediction_report_csv(
+    const std::vector<PredictionSummaryRow>& rows,
+    const std::string& output_path) {
+    std::ofstream output(output_path);
+    if (!output.is_open()) {
+        throw std::runtime_error("Could not open prediction report output path");
+    }
+
+    output << "horizon_messages,total_rows_seen,eligible_rows_with_valid_mid,labeled_rows,"
+              "skipped_no_valid_mid,skipped_no_future_move_within_horizon,skipped_zero_signal,"
+              "up_moves,down_moves,correct_predictions,incorrect_predictions,hit_rate,"
+              "information_coefficient,coverage_vs_total\n";
+    output << std::fixed << std::setprecision(6);
+    for (const PredictionSummaryRow& row : rows) {
+        output << row.horizon_messages << ','
+               << row.total_rows_seen << ','
+               << row.eligible_rows_with_valid_mid << ','
+               << row.labeled_rows << ','
+               << row.skipped_no_valid_mid << ','
+               << row.skipped_no_future_move_within_horizon << ','
+               << row.skipped_zero_signal << ','
+               << row.up_moves << ','
+               << row.down_moves << ','
+               << row.correct_predictions << ','
+               << row.incorrect_predictions << ','
+               << row.hit_rate << ','
+               << row.information_coefficient << ','
+               << row.coverage_vs_total << '\n';
     }
 }
 
