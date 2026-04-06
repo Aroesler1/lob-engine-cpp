@@ -43,6 +43,27 @@ ctest --test-dir "$build_dir" --output-on-failure -C Release
 python -m pytest tests -q --tb=short
 ```
 
+## Prediction Reporting Feature Gate
+
+The new prediction labeling/reporting path is outside the replay-only benchmark timer and remains optional. The core `lob_benchmark` command is still the replay hot-path check:
+
+```bash
+taskset -c 0 "$build_dir/lob_benchmark" --dataset data/AAPL_sample_messages.csv --backend both --reserve on --depth 5 --repeat 100000
+```
+
+To exercise the same dataset through the normal replay CLI with prediction reporting disabled versus enabled:
+
+```bash
+"$build_dir/lob_engine" data/AAPL_sample_messages.csv --backend map --analytics-out "$build_dir/analytics.csv"
+"$build_dir/lob_engine" data/AAPL_sample_messages.csv --backend map --analytics-out "$build_dir/analytics.csv" --prediction-report-out "$build_dir/prediction_report.csv" --prediction-horizons 100
+```
+
+Expected behavior:
+
+- without prediction flags, the CLI emits the existing analytics CSV only
+- with prediction flags, the analytics CSV stays unchanged and a separate prediction report CSV is added
+- any extra work is feature-gated to the prediction-enabled CLI path; the replay-only benchmark command above remains valid and unchanged
+
 ## Measurement methodology
 
 - baseline variant: clean `origin/main` tree at commit `d627b73`
