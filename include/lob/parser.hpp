@@ -9,6 +9,11 @@
 
 namespace lob {
 
+// Parse the FIRST row of a LOBSTER orderbook_N file (columns repeat
+// ask_px, ask_sz, bid_px, bid_sz per level) into seedable levels.
+// Empty-level sentinels (+/-9999999999, non-positive sizes) are skipped.
+std::vector<SeedLevel> parse_orderbook_seed_row(const std::string& filepath);
+
 class LobsterParser {
 public:
     std::vector<LobsterMessage> parse_file(const std::string& filepath);

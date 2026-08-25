@@ -136,4 +136,54 @@ void LobsterParser::reset() {
     malformed_count_ = 0;
 }
 
+
+std::vector<SeedLevel> parse_orderbook_seed_row(const std::string& filepath) {
+    std::vector<SeedLevel> seeds;
+    std::ifstream stream(filepath);
+    if (!stream.is_open()) {
+        return seeds;
+    }
+    std::string line;
+    if (!std::getline(stream, line) || line.empty()) {
+        return seeds;
+    }
+
+    std::vector<long long> values;
+    values.reserve(40);
+    std::size_t start = 0;
+    while (start <= line.size()) {
+        const std::size_t comma = line.find(',', start);
+        const std::string token =
+            line.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        try {
+            values.push_back(std::stoll(token));
+        } catch (const std::exception&) {
+            return {};
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+
+    // columns repeat [ask_px, ask_sz, bid_px, bid_sz]; LOBSTER marks empty
+    // levels with +/-9999999999 prices and zero/negative sizes
+    constexpr long long kSentinel = 9999999999LL;
+    for (std::size_t group = 0; group + 3 < values.size(); group += 4) {
+        const long long ask_px = values[group];
+        const long long ask_sz = values[group + 1];
+        const long long bid_px = values[group + 2];
+        const long long bid_sz = values[group + 3];
+        if (ask_px > 0 && ask_px < kSentinel && ask_sz > 0) {
+            seeds.push_back(SeedLevel{Side::Sell, static_cast<Price>(ask_px),
+                                      static_cast<Quantity>(ask_sz)});
+        }
+        if (bid_px > 0 && bid_px < kSentinel && bid_sz > 0) {
+            seeds.push_back(SeedLevel{Side::Buy, static_cast<Price>(bid_px),
+                                      static_cast<Quantity>(bid_sz)});
+        }
+    }
+    return seeds;
+}
+
 }  // namespace lob

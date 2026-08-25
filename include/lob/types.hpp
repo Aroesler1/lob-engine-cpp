@@ -43,6 +43,14 @@ struct OrderBookLevel {
     Side side;
 };
 
+// Aggregate liquidity seeded from a vendor orderbook snapshot (opening
+// book state that the message stream alone cannot reconstruct).
+struct SeedLevel {
+    Side side;
+    Price price;
+    Quantity size;
+};
+
 inline bool operator==(const OrderBookLevel& lhs, const OrderBookLevel& rhs) noexcept {
     return lhs.price == rhs.price &&
            lhs.total_size == rhs.total_size &&

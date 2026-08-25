@@ -12,6 +12,9 @@ namespace {
 struct LevelState {
     AggregateQuantity total_size{0};
     OrderCount order_count{0};
+    // liquidity seeded from a vendor snapshot (not tied to any order id);
+    // consumed by cancel/execution messages that reference unknown ids
+    AggregateQuantity synthetic_size{0};
 };
 
 template <Side SideValue>
@@ -190,6 +193,9 @@ public:
         if (config.enable_preallocation && config.expected_orders > 0) {
             orders_.reserve(config.expected_orders);
         }
+        for (const SeedLevel& seed : config.seed_levels) {
+            seed_level(seed.side, seed.price, seed.size);
+        }
     }
 
     void apply(const LobsterMessage& message) {
@@ -198,19 +204,36 @@ public:
             add_order(message.order_id, message.size, message.price, message.direction);
             break;
         case EventType::PartialCancel:
-            reduce_order(message.order_id, message.size);
+        case EventType::ExecutionVisible:
+            if (!reduce_order(message.order_id, message.size)) {
+                // LOBSTER message streams start at 09:30 but reference
+                // orders resting from before the window; when the book was
+                // seeded from a vendor snapshot those live as synthetic
+                // level liquidity
+                reduce_synthetic(message.direction, message.price, message.size);
+            }
             break;
         case EventType::FullCancel:
-            remove_order(message.order_id);
-            break;
-        case EventType::ExecutionVisible:
-            reduce_order(message.order_id, message.size);
+            if (!remove_order(message.order_id)) {
+                reduce_synthetic(message.direction, message.price, message.size);
+            }
             break;
         case EventType::ExecutionHidden:
         case EventType::CrossTrade:
         case EventType::TradingHalt:
             break;
         }
+    }
+
+    void seed_level(Side side, Price price, Quantity size) {
+        if (size <= 0) {
+            return;
+        }
+        LevelState& level_state = with_side(side, [price](auto& levels) -> LevelState& {
+            return levels.find_or_create(price);
+        });
+        level_state.total_size += size;
+        level_state.synthetic_size += size;
     }
 
     std::optional<OrderBookLevel> best_bid() const {
@@ -277,26 +300,52 @@ private:
         ++level_state.order_count;
     }
 
-    void reduce_order(OrderId order_id, Quantity requested_reduction) {
+    bool reduce_order(OrderId order_id, Quantity requested_reduction) {
         if (requested_reduction <= 0) {
-            return;
+            return true;
         }
 
         auto it = orders_.find(order_id);
         if (it == orders_.end()) {
-            return;
+            return false;
         }
 
         const Quantity reduction = std::min(it->second.remaining_size, requested_reduction);
         apply_reduction(it, reduction);
+        return true;
     }
 
-    void remove_order(OrderId order_id) {
+    bool remove_order(OrderId order_id) {
         auto it = orders_.find(order_id);
         if (it == orders_.end()) {
-            return;
+            return false;
         }
         apply_reduction(it, it->second.remaining_size);
+        return true;
+    }
+
+    void reduce_synthetic(Side side, Price price, Quantity size) {
+        if (size <= 0) {
+            return;
+        }
+        LevelState* level_state = with_side(side, [price](auto& levels) {
+            return levels.find(price);
+        });
+        if (level_state == nullptr) {
+            // liquidity outside the seeded window (e.g. deeper than the
+            // snapshot depth); nothing to reduce
+            return;
+        }
+        const AggregateQuantity reduction =
+            std::min<AggregateQuantity>(size, level_state->synthetic_size);
+        if (reduction <= 0) {
+            return;
+        }
+        level_state->total_size -= reduction;
+        level_state->synthetic_size -= reduction;
+        if (level_state->total_size == 0 && level_state->order_count == 0) {
+            with_side(side, [price](auto& levels) { levels.erase(price); });
+        }
     }
 
     void erase_order(typename std::unordered_map<OrderId, OrderState>::iterator it) {
@@ -401,6 +450,10 @@ void MapOrderBook::apply(const LobsterMessage& message) {
     impl_->apply(message);
 }
 
+void MapOrderBook::seed_level(Side side, Price price, Quantity size) {
+    impl_->seed_level(side, price, size);
+}
+
 std::optional<OrderBookLevel> MapOrderBook::best_bid() const {
     return impl_->best_bid();
 }
@@ -438,6 +491,10 @@ FlatVectorOrderBook& FlatVectorOrderBook::operator=(FlatVectorOrderBook&&) noexc
 
 void FlatVectorOrderBook::apply(const LobsterMessage& message) {
     impl_->apply(message);
+}
+
+void FlatVectorOrderBook::seed_level(Side side, Price price, Quantity size) {
+    impl_->seed_level(side, price, size);
 }
 
 std::optional<OrderBookLevel> FlatVectorOrderBook::best_bid() const {

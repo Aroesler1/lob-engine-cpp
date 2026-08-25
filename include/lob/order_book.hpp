@@ -29,6 +29,8 @@ struct OrderBookBuildConfig {
     std::size_t expected_orders{0};
     std::size_t expected_levels_per_side{0};
     bool enable_preallocation{true};
+    // applied at construction, before any message; see SeedLevel
+    std::vector<SeedLevel> seed_levels{};
 };
 
 bool operator==(const BookSnapshot& lhs, const BookSnapshot& rhs) noexcept;
@@ -38,6 +40,11 @@ public:
     virtual ~OrderBook() = default;
 
     virtual void apply(const LobsterMessage& message) = 0;
+
+    // Inject aggregate liquidity from a vendor snapshot (opening book state
+    // that the message stream alone cannot reconstruct). Seeded liquidity is
+    // consumed by cancel/execution messages referencing unknown order ids.
+    virtual void seed_level(Side side, Price price, Quantity size) = 0;
 
     virtual std::optional<OrderBookLevel> best_bid() const = 0;
     virtual std::optional<OrderBookLevel> best_ask() const = 0;
@@ -59,6 +66,7 @@ public:
     MapOrderBook& operator=(const MapOrderBook&) = delete;
 
     void apply(const LobsterMessage& message) override;
+    void seed_level(Side side, Price price, Quantity size) override;
 
     std::optional<OrderBookLevel> best_bid() const override;
     std::optional<OrderBookLevel> best_ask() const override;
@@ -84,6 +92,7 @@ public:
     FlatVectorOrderBook& operator=(const FlatVectorOrderBook&) = delete;
 
     void apply(const LobsterMessage& message) override;
+    void seed_level(Side side, Price price, Quantity size) override;
 
     std::optional<OrderBookLevel> best_bid() const override;
     std::optional<OrderBookLevel> best_ask() const override;

@@ -120,9 +120,67 @@ void test_replay_helper_matches_direct_application() {
     assert(replayed_book.best_ask() == std::optional<OrderBookLevel>(OrderBookLevel{5050, 7, 1, Side::Sell}));
 }
 
+
+void test_seeded_levels_and_unknown_id_fallback() {
+    lob::OrderBookBuildConfig config;
+    config.seed_levels.push_back(lob::SeedLevel{lob::Side::Sell, 310800, 200});
+    config.seed_levels.push_back(lob::SeedLevel{lob::Side::Buy, 309500, 300});
+    lob::MapOrderBook book(config);
+
+    // seeded liquidity is visible immediately
+    assert(book.best_ask().has_value() && book.best_ask()->price == 310800);
+    assert(book.best_ask()->total_size == 200);
+    assert(book.best_bid().has_value() && book.best_bid()->total_size == 300);
+
+    // an intraday order stacks on the seeded level
+    book.apply(lob::LobsterMessage{1.0, lob::EventType::NewOrder, 42, 100, 310800, lob::Side::Sell});
+    assert(book.level(lob::Side::Sell, 310800)->total_size == 300);
+
+    // a cancel referencing an unknown (pre-open) id consumes seeded liquidity
+    book.apply(lob::LobsterMessage{2.0, lob::EventType::FullCancel, 999, 200, 310800, lob::Side::Sell});
+    assert(book.level(lob::Side::Sell, 310800)->total_size == 100);
+
+    // further unknown reductions cannot touch tracked-order liquidity
+    book.apply(lob::LobsterMessage{3.0, lob::EventType::FullCancel, 998, 500, 310800, lob::Side::Sell});
+    assert(book.level(lob::Side::Sell, 310800)->total_size == 100);
+
+    // the tracked order is still individually removable
+    book.apply(lob::LobsterMessage{4.0, lob::EventType::FullCancel, 42, 100, 310800, lob::Side::Sell});
+    assert(!book.level(lob::Side::Sell, 310800).has_value());
+
+    // unknown execution fully drains a purely seeded level and erases it
+    book.apply(lob::LobsterMessage{5.0, lob::EventType::ExecutionVisible, 997, 300, 309500, lob::Side::Buy});
+    assert(!book.best_bid().has_value());
+}
+
+void test_seeded_backends_stay_in_parity() {
+    lob::OrderBookBuildConfig config;
+    config.seed_levels.push_back(lob::SeedLevel{lob::Side::Sell, 101000, 400});
+    config.seed_levels.push_back(lob::SeedLevel{lob::Side::Buy, 100000, 250});
+
+    lob::MapOrderBook map_book(config);
+    lob::FlatVectorOrderBook flat_book(config);
+
+    const std::vector<lob::LobsterMessage> messages = {
+        {1.0, lob::EventType::NewOrder, 1, 100, 100500, lob::Side::Buy},
+        {2.0, lob::EventType::PartialCancel, 777, 150, 101000, lob::Side::Sell},  // unknown id
+        {3.0, lob::EventType::NewOrder, 2, 50, 101000, lob::Side::Sell},
+        {4.0, lob::EventType::ExecutionVisible, 778, 250, 100000, lob::Side::Buy},  // unknown id
+        {5.0, lob::EventType::FullCancel, 1, 100, 100500, lob::Side::Buy},
+    };
+    for (const lob::LobsterMessage& message : messages) {
+        map_book.apply(message);
+        flat_book.apply(message);
+        assert(map_book.snapshot(10) == flat_book.snapshot(10));
+    }
+    assert(map_book.level(lob::Side::Sell, 101000)->total_size == 300);
+}
+
 }  // namespace
 
 int main() {
+    test_seeded_levels_and_unknown_id_fallback();
+    test_seeded_backends_stay_in_parity();
     test_map_and_flat_vector_match_after_each_event();
     test_replay_helper_matches_direct_application();
 
