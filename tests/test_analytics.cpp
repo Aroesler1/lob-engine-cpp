@@ -85,6 +85,91 @@ void assert_rows_match(const lob::AnalyticsRow& lhs, const lob::AnalyticsRow& rh
     assert(lhs.rolling_vwap == rhs.rolling_vwap);
     assert(lhs.trade_flow_imbalance == rhs.trade_flow_imbalance);
     assert(lhs.rolling_realized_vol == rhs.rolling_realized_vol);
+    assert(lhs.ofi_event == rhs.ofi_event);
+    assert(lhs.rolling_ofi == rhs.rolling_ofi);
+}
+
+lob::BookSnapshot make_l1_snapshot(
+    std::optional<lob::OrderBookLevel> bid,
+    std::optional<lob::OrderBookLevel> ask) {
+    lob::BookSnapshot snapshot;
+    snapshot.best_bid = bid;
+    snapshot.best_ask = ask;
+    if (bid.has_value()) {
+        snapshot.bids.push_back(*bid);
+    }
+    if (ask.has_value()) {
+        snapshot.asks.push_back(*ask);
+    }
+    if (bid.has_value() && ask.has_value()) {
+        snapshot.spread = ask->price - bid->price;
+        snapshot.mid_price = (static_cast<double>(ask->price) + static_cast<double>(bid->price)) / 2.0;
+    }
+    return snapshot;
+}
+
+lob::LobsterMessage make_quote_message(double timestamp) {
+    return lob::LobsterMessage{timestamp, lob::EventType::NewOrder, 1, 1, 1000, lob::Side::Buy};
+}
+
+void test_ofi_hand_computed_sequence() {
+    lob::AnalyticsConfig config;
+    config.trade_window_messages = 1000;
+    lob::AnalyticsEngine engine(config);
+
+    const auto bid = [](lob::Price px, lob::AggregateQuantity sz) {
+        return lob::OrderBookLevel{px, sz, 1, lob::Side::Buy};
+    };
+    const auto ask = [](lob::Price px, lob::AggregateQuantity sz) {
+        return lob::OrderBookLevel{px, sz, 1, lob::Side::Sell};
+    };
+
+    // first observed book is state, not flow
+    lob::AnalyticsRow row = engine.on_message(
+        make_quote_message(1.0), make_l1_snapshot(bid(10000, 10), ask(10100, 5)));
+    assert(row.ofi_event == 0.0);
+    assert(row.rolling_ofi == 0.0);
+
+    // bid size grows at an unchanged touch: e = +15 - 10 = +5; ask unchanged: 0
+    row = engine.on_message(
+        make_quote_message(2.0), make_l1_snapshot(bid(10000, 15), ask(10100, 5)));
+    assert(row.ofi_event == 5.0);
+    assert(row.rolling_ofi == 5.0);
+
+    // bid retreats 10000 -> 9900 (e -= 15); ask improves 10100 -> 10050 (e -= 4)
+    row = engine.on_message(
+        make_quote_message(3.0), make_l1_snapshot(bid(9900, 7), ask(10050, 4)));
+    assert(row.ofi_event == -19.0);
+    assert(row.rolling_ofi == -14.0);
+
+    // bid side vanishes (e -= 7); ask unchanged: 0
+    row = engine.on_message(
+        make_quote_message(4.0), make_l1_snapshot(std::nullopt, ask(10050, 4)));
+    assert(row.ofi_event == -7.0);
+    assert(row.rolling_ofi == -21.0);
+}
+
+void test_rolling_ofi_evicts_beyond_window() {
+    lob::AnalyticsConfig config;
+    config.trade_window_messages = 2;
+    lob::AnalyticsEngine engine(config);
+
+    const auto bid = [](lob::Price px, lob::AggregateQuantity sz) {
+        return lob::OrderBookLevel{px, sz, 1, lob::Side::Buy};
+    };
+    const auto ask = [](lob::Price px, lob::AggregateQuantity sz) {
+        return lob::OrderBookLevel{px, sz, 1, lob::Side::Sell};
+    };
+
+    engine.on_message(make_quote_message(1.0), make_l1_snapshot(bid(10000, 10), ask(10100, 5)));  // e=0
+    lob::AnalyticsRow row = engine.on_message(
+        make_quote_message(2.0), make_l1_snapshot(bid(10000, 14), ask(10100, 5)));  // e=+4
+    assert(row.rolling_ofi == 4.0);
+    row = engine.on_message(
+        make_quote_message(3.0), make_l1_snapshot(bid(10000, 20), ask(10100, 5)));  // e=+6
+    // window of 2 holds {+4, +6}; the startup 0 was evicted
+    assert(row.ofi_event == 6.0);
+    assert(row.rolling_ofi == 10.0);
 }
 
 void test_analytics_outputs_match_across_backends() {
@@ -438,6 +523,8 @@ int main() {
     test_analytics_rows_cover_every_message();
     test_trade_metrics_and_realized_vol_are_populated();
     test_analytics_outputs_match_across_backends();
+    test_ofi_hand_computed_sequence();
+    test_rolling_ofi_evicts_beyond_window();
     test_prediction_config_defaults_and_round_trip();
     test_prediction_positive_label_when_first_non_zero_future_move_is_up();
     test_prediction_negative_label_when_first_non_zero_future_move_is_down();

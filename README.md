@@ -86,6 +86,9 @@ Each processed message produces a row with:
 - `rolling_vwap`
 - `trade_flow_imbalance`
 - `rolling_realized_vol`
+- `ofi_event`, `rolling_ofi`
+
+`ofi_event` is the L1 order flow imbalance of Cont, Kukanov and Stoikov (2014), computed per message from best-quote transitions: `e_n = 1{Pb >= Pb'} qb - 1{Pb <= Pb'} qb' - 1{Pa <= Pa'} qa + 1{Pa >= Pa'} qa'`. A vanished side contributes as a move away from the touch, and the first observed book contributes zero (state, not flow). `rolling_ofi` sums `e_n` over the trailing `trade_window_messages` events. OFI is the standard flow-based alternative to the static depth imbalance in `order_imbalance`; in the literature it explains short-horizon price changes substantially better, so both are exported for comparison. Hand-computed transition sequences are covered in `test_analytics`.
 
 The default rolling windows match the project objective:
 

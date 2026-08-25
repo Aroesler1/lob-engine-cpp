@@ -256,6 +256,7 @@ struct AnalyticsEngine::Impl {
     explicit Impl(const AnalyticsConfig& config)
         : trade_window_capacity(std::max<std::size_t>(1, config.trade_window_messages)),
           trade_window(trade_window_capacity),
+          ofi_window(trade_window_capacity),
           mid_window(config.expected_messages) {}
 
     bool push_trade(const TradeContribution& contribution, TradeContribution& evicted) {
@@ -271,19 +272,45 @@ struct AnalyticsEngine::Impl {
         return true;
     }
 
+    bool push_ofi(double contribution, double& evicted) {
+        if (ofi_window_size < trade_window_capacity) {
+            ofi_window[(ofi_window_head + ofi_window_size) % trade_window_capacity] = contribution;
+            ++ofi_window_size;
+            return false;
+        }
+
+        evicted = ofi_window[ofi_window_head];
+        ofi_window[ofi_window_head] = contribution;
+        ofi_window_head = (ofi_window_head + 1) % trade_window_capacity;
+        return true;
+    }
+
     void clear() {
         trade_window_size = 0;
         trade_window_head = 0;
+        ofi_window_size = 0;
+        ofi_window_head = 0;
         mid_window.clear();
         rolling_notional = 0.0;
         rolling_quantity = 0.0;
         rolling_signed_quantity = 0.0;
+        rolling_ofi_sum = 0.0;
+        has_prev_best = false;
+        prev_best_bid.reset();
+        prev_best_ask.reset();
     }
 
     std::size_t trade_window_capacity{1};
     std::vector<TradeContribution> trade_window;
     std::size_t trade_window_head{0};
     std::size_t trade_window_size{0};
+    std::vector<double> ofi_window;
+    std::size_t ofi_window_head{0};
+    std::size_t ofi_window_size{0};
+    double rolling_ofi_sum{0.0};
+    bool has_prev_best{false};
+    std::optional<OrderBookLevel> prev_best_bid;
+    std::optional<OrderBookLevel> prev_best_ask;
     SlidingWindowBuffer<MidSample> mid_window;
     double rolling_notional{0.0};
     double rolling_quantity{0.0};
@@ -328,6 +355,50 @@ void AnalyticsEngine::on_message(
     if (depth_balance > 0.0) {
         row.order_imbalance = static_cast<double>(row.bid_depth_5 - row.ask_depth_5) / depth_balance;
     }
+
+    // L1 order flow imbalance (Cont, Kukanov & Stoikov 2014):
+    //   e_n = 1{Pb >= Pb'} qb - 1{Pb <= Pb'} qb' - 1{Pa <= Pa'} qa + 1{Pa >= Pa'} qa'
+    // A vanished side contributes as a price move away from the touch; the
+    // first observed book is state, not flow, so it contributes zero.
+    double ofi = 0.0;
+    if (impl_->has_prev_best) {
+        const auto& prev_bid = impl_->prev_best_bid;
+        const auto& prev_ask = impl_->prev_best_ask;
+        if (snapshot.best_bid.has_value() && prev_bid.has_value()) {
+            if (snapshot.best_bid->price >= prev_bid->price) {
+                ofi += static_cast<double>(snapshot.best_bid->total_size);
+            }
+            if (snapshot.best_bid->price <= prev_bid->price) {
+                ofi -= static_cast<double>(prev_bid->total_size);
+            }
+        } else if (snapshot.best_bid.has_value()) {
+            ofi += static_cast<double>(snapshot.best_bid->total_size);
+        } else if (prev_bid.has_value()) {
+            ofi -= static_cast<double>(prev_bid->total_size);
+        }
+        if (snapshot.best_ask.has_value() && prev_ask.has_value()) {
+            if (snapshot.best_ask->price <= prev_ask->price) {
+                ofi -= static_cast<double>(snapshot.best_ask->total_size);
+            }
+            if (snapshot.best_ask->price >= prev_ask->price) {
+                ofi += static_cast<double>(prev_ask->total_size);
+            }
+        } else if (snapshot.best_ask.has_value()) {
+            ofi -= static_cast<double>(snapshot.best_ask->total_size);
+        } else if (prev_ask.has_value()) {
+            ofi += static_cast<double>(prev_ask->total_size);
+        }
+    }
+    row.ofi_event = ofi;
+    double evicted_ofi = 0.0;
+    if (impl_->push_ofi(ofi, evicted_ofi)) {
+        impl_->rolling_ofi_sum -= evicted_ofi;
+    }
+    impl_->rolling_ofi_sum += ofi;
+    row.rolling_ofi = impl_->rolling_ofi_sum;
+    impl_->prev_best_bid = snapshot.best_bid;
+    impl_->prev_best_ask = snapshot.best_ask;
+    impl_->has_prev_best = true;
 
     Impl::TradeContribution contribution{};
     if (is_trade_event(message.event_type) && message.size > 0 && message.price > 0) {
@@ -401,7 +472,7 @@ void write_analytics_csv(const std::vector<AnalyticsRow>& rows, const std::strin
 
     output << "timestamp,best_bid,best_ask,spread,mid,bid_depth_1,bid_depth_5,bid_depth_10,"
               "ask_depth_1,ask_depth_5,ask_depth_10,order_imbalance,rolling_vwap,trade_flow_imbalance,"
-              "rolling_realized_vol\n";
+              "rolling_realized_vol,ofi_event,rolling_ofi\n";
     output << std::fixed << std::setprecision(6);
     for (const AnalyticsRow& row : rows) {
         output << row.timestamp << ',';
@@ -426,6 +497,7 @@ void write_analytics_csv(const std::vector<AnalyticsRow>& rows, const std::strin
         write_optional(output, row.trade_flow_imbalance);
         output << ',';
         write_optional(output, row.rolling_realized_vol);
+        output << ',' << row.ofi_event << ',' << row.rolling_ofi;
         output << '\n';
     }
 }

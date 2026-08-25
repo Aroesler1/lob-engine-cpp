@@ -234,6 +234,12 @@ struct AnalyticsRow {
     std::optional<double> rolling_vwap;
     std::optional<double> trade_flow_imbalance;
     std::optional<double> rolling_realized_vol;
+    // L1 order flow imbalance (Cont, Kukanov & Stoikov 2014): per-event
+    // best-quote flow contribution, and its sum over the trailing
+    // trade_window_messages events. Zero until a previous best-quote state
+    // exists (the initial book is state, not flow).
+    double ofi_event{0.0};
+    double rolling_ofi{0.0};
 };
 
 struct PredictionSnapshot {
