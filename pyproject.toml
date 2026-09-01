@@ -1,7 +1,7 @@
 [project]
-name = "project_real_time_limit_order_book_engine_in_c_1775258936"
+name = "lob-engine-cpp"
 version = "0.1.0"
-description = "Generated project workspace"
+description = "Deterministic C++ limit order book engine for LOBSTER-style message data"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]

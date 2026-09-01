@@ -26,13 +26,14 @@ struct CliOptions {
     double realized_vol_window_seconds{300.0};
     std::vector<int> prediction_horizons_messages;
     std::string prediction_report_out;
+    std::string seed_book;
 };
 
 void print_usage() {
     std::cerr
         << "Usage: lob_engine <lobster_csv_file> [--backend map|flat|both] [--depth N] [--repeat N] "
            "[--analytics-out PATH] [--trade-window-messages N] [--realized-vol-window-seconds N] "
-           "[--prediction-report-out PATH] [--prediction-horizons H1,H2,...]\n";
+           "[--prediction-report-out PATH] [--prediction-horizons H1,H2,...] [--seed-book ORDERBOOK_CSV]\n";
 }
 
 std::optional<std::size_t> parse_positive_size(const std::string& value) {
@@ -198,6 +199,14 @@ bool parse_args(int argc, char* argv[], CliOptions& options, std::string& error)
             continue;
         }
 
+        if (arg == "--seed-book") {
+            if (index + 1 >= argc) {
+                error = "--seed-book requires a LOBSTER orderbook csv path";
+                return false;
+            }
+            options.seed_book = argv[++index];
+            continue;
+        }
         if (arg == "--prediction-report-out") {
             if (index + 1 >= argc) {
                 error = "Missing value for --prediction-report-out";
@@ -300,7 +309,24 @@ int main(int argc, char* argv[]) {
     }
 
     lob::LobsterParser parser;
-    const std::vector<lob::LobsterMessage> messages = parser.parse_file(options.filepath);
+    std::vector<lob::LobsterMessage> messages = parser.parse_file(options.filepath);
+
+    std::vector<lob::SeedLevel> seed_levels;
+    if (!options.seed_book.empty()) {
+        seed_levels = lob::parse_orderbook_seed_row(options.seed_book);
+        if (seed_levels.empty()) {
+            std::cerr << "Could not parse seed levels from: " << options.seed_book << '\n';
+            return 1;
+        }
+        // the vendor's first orderbook row describes the state AFTER the
+        // first message, so seeding from it means the first message is
+        // already applied; drop it and align outputs to vendor rows 2..N
+        if (!messages.empty()) {
+            messages.erase(messages.begin());
+        }
+        std::cout << "Seeded book levels: " << seed_levels.size()
+                  << " (first message skipped; rows align to vendor rows 2..N)\n";
+    }
 
     std::array<std::size_t, 7> event_counts{};
     for (const lob::LobsterMessage& message : messages) {
@@ -326,6 +352,7 @@ int main(int argc, char* argv[]) {
     lob::OrderBookBuildConfig build_config;
     build_config.enable_preallocation = true;
     build_config = lob::derive_order_book_build_config(messages, build_config);
+    build_config.seed_levels = seed_levels;
 
     std::cout << std::fixed << std::setprecision(3);
     for (const lob::OrderBookBackend backend : backends) {

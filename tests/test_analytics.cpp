@@ -69,6 +69,56 @@ void test_trade_metrics_and_realized_vol_are_populated() {
     assert(rows.back().rolling_realized_vol.has_value());
 }
 
+// The rolling realized-vol sum is maintained incrementally (add on push,
+// subtract on eviction) because recomputing it per message is O(window) and so
+// O(n^2) over a session. This pins the incremental result to an independent
+// recomputation from scratch AFTER the window has evicted samples -- eviction
+// is the half an incremental accumulator gets wrong.
+void test_incremental_realized_vol_matches_recomputation() {
+    lob::AnalyticsConfig config;
+    config.realized_vol_window_seconds = 5.0;
+
+    std::vector<lob::LobsterMessage> messages;
+    for (int i = 0; i < 40; ++i) {
+        const lob::Price bid = 10000 + (i % 7) * 10;
+        const lob::Price ask = bid + 20;
+        const double t = 100.0 + static_cast<double>(i) * 0.5;  // 20s span vs 5s window
+        messages.push_back({t, lob::EventType::NewOrder, 2 * i + 1, 50, bid, lob::Side::Buy});
+        messages.push_back({t, lob::EventType::NewOrder, 2 * i + 2, 50, ask, lob::Side::Sell});
+    }
+
+    lob::MapOrderBook book;
+    const std::vector<lob::AnalyticsRow> rows = lob::replay_with_analytics(messages, book, config);
+    assert(rows.size() == messages.size());
+
+    // rebuild the surviving window from the emitted mids, then sum directly
+    const double final_ts = messages.back().timestamp;
+    std::vector<double> window_mids;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].mid_price.has_value() &&
+            messages[i].timestamp >= final_ts - config.realized_vol_window_seconds) {
+            window_mids.push_back(*rows[i].mid_price);
+        }
+    }
+
+    double expected = 0.0;
+    for (std::size_t i = 1; i < window_mids.size(); ++i) {
+        const double r = std::log(window_mids[i] / window_mids[i - 1]);
+        expected += r * r;
+    }
+    expected = std::sqrt(expected);
+
+    assert(rows.back().rolling_realized_vol.has_value());
+    assert(almost_equal(*rows.back().rolling_realized_vol, expected, 1e-9));
+
+    // repeated add/subtract must never drive the accumulator negative
+    for (const lob::AnalyticsRow& row : rows) {
+        if (row.rolling_realized_vol.has_value()) {
+            assert(*row.rolling_realized_vol >= 0.0);
+        }
+    }
+}
+
 void assert_rows_match(const lob::AnalyticsRow& lhs, const lob::AnalyticsRow& rhs) {
     assert(lhs.timestamp == rhs.timestamp);
     assert(lhs.best_bid == rhs.best_bid);
@@ -85,6 +135,91 @@ void assert_rows_match(const lob::AnalyticsRow& lhs, const lob::AnalyticsRow& rh
     assert(lhs.rolling_vwap == rhs.rolling_vwap);
     assert(lhs.trade_flow_imbalance == rhs.trade_flow_imbalance);
     assert(lhs.rolling_realized_vol == rhs.rolling_realized_vol);
+    assert(lhs.ofi_event == rhs.ofi_event);
+    assert(lhs.rolling_ofi == rhs.rolling_ofi);
+}
+
+lob::BookSnapshot make_l1_snapshot(
+    std::optional<lob::OrderBookLevel> bid,
+    std::optional<lob::OrderBookLevel> ask) {
+    lob::BookSnapshot snapshot;
+    snapshot.best_bid = bid;
+    snapshot.best_ask = ask;
+    if (bid.has_value()) {
+        snapshot.bids.push_back(*bid);
+    }
+    if (ask.has_value()) {
+        snapshot.asks.push_back(*ask);
+    }
+    if (bid.has_value() && ask.has_value()) {
+        snapshot.spread = ask->price - bid->price;
+        snapshot.mid_price = (static_cast<double>(ask->price) + static_cast<double>(bid->price)) / 2.0;
+    }
+    return snapshot;
+}
+
+lob::LobsterMessage make_quote_message(double timestamp) {
+    return lob::LobsterMessage{timestamp, lob::EventType::NewOrder, 1, 1, 1000, lob::Side::Buy};
+}
+
+void test_ofi_hand_computed_sequence() {
+    lob::AnalyticsConfig config;
+    config.trade_window_messages = 1000;
+    lob::AnalyticsEngine engine(config);
+
+    const auto bid = [](lob::Price px, lob::AggregateQuantity sz) {
+        return lob::OrderBookLevel{px, sz, 1, lob::Side::Buy};
+    };
+    const auto ask = [](lob::Price px, lob::AggregateQuantity sz) {
+        return lob::OrderBookLevel{px, sz, 1, lob::Side::Sell};
+    };
+
+    // first observed book is state, not flow
+    lob::AnalyticsRow row = engine.on_message(
+        make_quote_message(1.0), make_l1_snapshot(bid(10000, 10), ask(10100, 5)));
+    assert(row.ofi_event == 0.0);
+    assert(row.rolling_ofi == 0.0);
+
+    // bid size grows at an unchanged touch: e = +15 - 10 = +5; ask unchanged: 0
+    row = engine.on_message(
+        make_quote_message(2.0), make_l1_snapshot(bid(10000, 15), ask(10100, 5)));
+    assert(row.ofi_event == 5.0);
+    assert(row.rolling_ofi == 5.0);
+
+    // bid retreats 10000 -> 9900 (e -= 15); ask improves 10100 -> 10050 (e -= 4)
+    row = engine.on_message(
+        make_quote_message(3.0), make_l1_snapshot(bid(9900, 7), ask(10050, 4)));
+    assert(row.ofi_event == -19.0);
+    assert(row.rolling_ofi == -14.0);
+
+    // bid side vanishes (e -= 7); ask unchanged: 0
+    row = engine.on_message(
+        make_quote_message(4.0), make_l1_snapshot(std::nullopt, ask(10050, 4)));
+    assert(row.ofi_event == -7.0);
+    assert(row.rolling_ofi == -21.0);
+}
+
+void test_rolling_ofi_evicts_beyond_window() {
+    lob::AnalyticsConfig config;
+    config.trade_window_messages = 2;
+    lob::AnalyticsEngine engine(config);
+
+    const auto bid = [](lob::Price px, lob::AggregateQuantity sz) {
+        return lob::OrderBookLevel{px, sz, 1, lob::Side::Buy};
+    };
+    const auto ask = [](lob::Price px, lob::AggregateQuantity sz) {
+        return lob::OrderBookLevel{px, sz, 1, lob::Side::Sell};
+    };
+
+    engine.on_message(make_quote_message(1.0), make_l1_snapshot(bid(10000, 10), ask(10100, 5)));  // e=0
+    lob::AnalyticsRow row = engine.on_message(
+        make_quote_message(2.0), make_l1_snapshot(bid(10000, 14), ask(10100, 5)));  // e=+4
+    assert(row.rolling_ofi == 4.0);
+    row = engine.on_message(
+        make_quote_message(3.0), make_l1_snapshot(bid(10000, 20), ask(10100, 5)));  // e=+6
+    // window of 2 holds {+4, +6}; the startup 0 was evicted
+    assert(row.ofi_event == 6.0);
+    assert(row.rolling_ofi == 10.0);
 }
 
 void test_analytics_outputs_match_across_backends() {
@@ -437,7 +572,10 @@ void test_prediction_report_writer_emits_expected_header_and_rows() {
 int main() {
     test_analytics_rows_cover_every_message();
     test_trade_metrics_and_realized_vol_are_populated();
+    test_incremental_realized_vol_matches_recomputation();
     test_analytics_outputs_match_across_backends();
+    test_ofi_hand_computed_sequence();
+    test_rolling_ofi_evicts_beyond_window();
     test_prediction_config_defaults_and_round_trip();
     test_prediction_positive_label_when_first_non_zero_future_move_is_up();
     test_prediction_negative_label_when_first_non_zero_future_move_is_down();

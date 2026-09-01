@@ -144,9 +144,28 @@ void test_invalid_event_types_are_malformed() {
     std::filesystem::remove(path);
 }
 
+
+void test_orderbook_seed_row_parsing() {
+    const auto path = make_temp_file("seed_row");
+    {
+        std::ofstream out(path);
+        // level 1: ask 309900x3788, bid 309500x300; level 2 ask empty
+        // sentinel, bid 309300x3986; level 3 both empty
+        out << "309900,3788,309500,300,9999999999,0,309300,3986,-9999999999,0,-9999999999,0\n";
+        out << "111,222,333,444\n";  // later rows must be ignored
+    }
+    const std::vector<lob::SeedLevel> seeds = lob::parse_orderbook_seed_row(path.string());
+    assert(seeds.size() == 3);
+    assert(seeds[0].side == lob::Side::Sell && seeds[0].price == 309900 && seeds[0].size == 3788);
+    assert(seeds[1].side == lob::Side::Buy && seeds[1].price == 309500 && seeds[1].size == 300);
+    assert(seeds[2].side == lob::Side::Buy && seeds[2].price == 309300 && seeds[2].size == 3986);
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
+    test_orderbook_seed_row_parsing();
     test_parse_known_valid_line();
     test_sample_file_counts();
     test_malformed_lines_are_counted();

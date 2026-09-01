@@ -69,7 +69,7 @@ def test_cmake_build_and_cpp_binaries():
     assert baseline_analytics_csv.startswith(
         "timestamp,best_bid,best_ask,spread,mid,bid_depth_1,bid_depth_5,bid_depth_10,"
         "ask_depth_1,ask_depth_5,ask_depth_10,order_imbalance,rolling_vwap,trade_flow_imbalance,"
-        "rolling_realized_vol\n"
+        "rolling_realized_vol,ofi_event,rolling_ofi\n"
     )
     assert baseline_flat_analytics_csv == baseline_analytics_csv
     assert len(baseline_analytics_csv.strip().splitlines()) == 21

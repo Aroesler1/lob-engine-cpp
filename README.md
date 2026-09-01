@@ -75,6 +75,12 @@ Emit a separate prediction summary after replay without changing the analytics C
 
 `--prediction-report-out` requires `--prediction-horizons`. If both flags are omitted, prediction work stays disabled.
 
+Seed the opening book from the first row of a LOBSTER orderbook file (message streams begin at 09:30 and reference pre-open resting orders; see Real-data validation below):
+
+```bash
+"$build_dir/lob_engine" MSFT_message_10.csv --backend map --seed-book MSFT_orderbook_10.csv --analytics-out analytics.csv
+```
+
 ## Analytics
 
 Each processed message produces a row with:
@@ -86,6 +92,9 @@ Each processed message produces a row with:
 - `rolling_vwap`
 - `trade_flow_imbalance`
 - `rolling_realized_vol`
+- `ofi_event`, `rolling_ofi`
+
+`ofi_event` is the L1 order flow imbalance of Cont, Kukanov and Stoikov (2014), computed per message from best-quote transitions: `e_n = 1{Pb >= Pb'} qb - 1{Pb <= Pb'} qb' - 1{Pa <= Pa'} qa + 1{Pa >= Pa'} qa'`. A vanished side contributes as a move away from the touch, and the first observed book contributes zero (state, not flow). `rolling_ofi` sums `e_n` over the trailing `trade_window_messages` events. OFI and the static depth imbalance answer different questions: on the LOBSTER sample day below, OFI is by far the stronger *contemporaneous* impact variable (the CKS result) while depth imbalance is the better *predictor* of the next mid move, so both are exported and the comparison is reproducible via `scripts/ofi_predictive_power.py`. Hand-computed transition sequences are covered in `test_analytics`.
 
 The default rolling windows match the project objective:
 
@@ -178,6 +187,51 @@ The repo ships five checked-in reproducibility fixtures:
 The four ticker-named files are 25-line reduced fixtures with 20 valid messages plus 5 intentionally malformed rows each. `sample_messages.csv` is a legacy generic fixture with the same contents as `AAPL_sample_messages.csv`, kept because the parser and Python integration tests reference it directly.
 
 These files are intentionally tiny and deterministic so the build, tests, and benchmark workflow can run on a fresh clone without external data dependencies. They are suitable for correctness checks and relative replay comparisons, not production-grade market simulation or claims about full vendor data.
+
+## Real-data validation (LOBSTER sample day, 2026-08)
+
+The engine was run against the canonical LOBSTER sample day (MSFT
+2012-06-21, level 10: 668,765 messages, level-10 orderbook file alongside).
+The files are not checked in (~200 MB); they are the standard LOBSTER
+academic sample, mirrored in several public research repos.
+
+**Replay**: all 668,765 messages parse with 0 malformed rows; full-day
+replay throughput measured locally (Apple clang, `-O2`, M-series laptop)
+was ~14.4M msgs/s (`map`) and ~15.1M msgs/s (`flat_vector`). Treat as
+order-of-magnitude local numbers, not publishable benchmarks.
+
+**Book reconstruction vs the vendor's own orderbook rows**
+(`scripts/validate_l1_reconstruction.py`): LOBSTER message streams begin at
+09:30 and reference orders resting from before the window, so the engine
+supports seeding the opening book from the vendor's first orderbook row
+(`--seed-book`), with cancels/executions of unknown order ids consuming
+seeded liquidity at their price level. Seeded replay matches the vendor L1
+book **exactly for the first 4,710 messages**, and the first divergence is
+attributable, by message-level accounting, to a documented property of the
+data product rather than the engine: level-N LOBSTER message files omit
+events for orders whose level is outside the top N at event time, so
+liquidity that leaves the window and later scrolls back carries no removal
+messages (concrete example on this day: three bid orders totaling 1,600
+shares at 310200 are added on-stream but the file contains no removal for
+them, while the vendor book empties the level). Exact stateful replay
+across window exits is therefore impossible from a level-scoped message
+file by construction; the validator quantifies where that boundary is.
+
+**OFI vs depth imbalance** (`scripts/ofi_predictive_power.py`, computed on
+the vendor's L1 series so reconstruction error cannot contaminate the
+result), replicating two standard microstructure findings on this day:
+
+| relation | horizon (events) | signal | Pearson | Spearman |
+|---|---|---|---|---|
+| contemporaneous | 1000 | rolling OFI (1000) | **+0.85** | **+0.94** |
+| contemporaneous | 1000 | depth imbalance L1 | +0.22 | +0.26 |
+| forward | 100 | rolling OFI (1000) | +0.13 | +0.15 |
+| forward | 100 | depth imbalance L1 | **+0.48** | **+0.46** |
+
+Exactly as the literature says: OFI (Cont-Kukanov-Stoikov) is the strong
+*contemporaneous* impact variable, while queue/depth imbalance is the
+better *predictor* of the next mid move. Both are exported per message so
+the comparison can be rerun on any dataset.
 
 ## Why this is useful for quant / HFT workflows
 

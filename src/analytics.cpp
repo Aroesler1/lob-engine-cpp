@@ -114,6 +114,10 @@ public:
         return values_[start_index_];
     }
 
+    const T& back() const {
+        return values_.back();
+    }
+
     const T& operator[](std::size_t index) const {
         return values_[start_index_ + index];
     }
@@ -256,6 +260,7 @@ struct AnalyticsEngine::Impl {
     explicit Impl(const AnalyticsConfig& config)
         : trade_window_capacity(std::max<std::size_t>(1, config.trade_window_messages)),
           trade_window(trade_window_capacity),
+          ofi_window(trade_window_capacity),
           mid_window(config.expected_messages) {}
 
     bool push_trade(const TradeContribution& contribution, TradeContribution& evicted) {
@@ -271,19 +276,48 @@ struct AnalyticsEngine::Impl {
         return true;
     }
 
+    bool push_ofi(double contribution, double& evicted) {
+        if (ofi_window_size < trade_window_capacity) {
+            ofi_window[(ofi_window_head + ofi_window_size) % trade_window_capacity] = contribution;
+            ++ofi_window_size;
+            return false;
+        }
+
+        evicted = ofi_window[ofi_window_head];
+        ofi_window[ofi_window_head] = contribution;
+        ofi_window_head = (ofi_window_head + 1) % trade_window_capacity;
+        return true;
+    }
+
     void clear() {
         trade_window_size = 0;
         trade_window_head = 0;
+        ofi_window_size = 0;
+        ofi_window_head = 0;
         mid_window.clear();
         rolling_notional = 0.0;
         rolling_quantity = 0.0;
         rolling_signed_quantity = 0.0;
+        rolling_ofi_sum = 0.0;
+        rolling_sq_log_return = 0.0;
+        has_prev_best = false;
+        prev_best_bid.reset();
+        prev_best_ask.reset();
     }
 
     std::size_t trade_window_capacity{1};
     std::vector<TradeContribution> trade_window;
     std::size_t trade_window_head{0};
     std::size_t trade_window_size{0};
+    std::vector<double> ofi_window;
+    std::size_t ofi_window_head{0};
+    std::size_t ofi_window_size{0};
+    double rolling_ofi_sum{0.0};
+    // running sum of squared log returns across consecutive mids in the window
+    double rolling_sq_log_return{0.0};
+    bool has_prev_best{false};
+    std::optional<OrderBookLevel> prev_best_bid;
+    std::optional<OrderBookLevel> prev_best_ask;
     SlidingWindowBuffer<MidSample> mid_window;
     double rolling_notional{0.0};
     double rolling_quantity{0.0};
@@ -329,6 +363,50 @@ void AnalyticsEngine::on_message(
         row.order_imbalance = static_cast<double>(row.bid_depth_5 - row.ask_depth_5) / depth_balance;
     }
 
+    // L1 order flow imbalance (Cont, Kukanov & Stoikov 2014):
+    //   e_n = 1{Pb >= Pb'} qb - 1{Pb <= Pb'} qb' - 1{Pa <= Pa'} qa + 1{Pa >= Pa'} qa'
+    // A vanished side contributes as a price move away from the touch; the
+    // first observed book is state, not flow, so it contributes zero.
+    double ofi = 0.0;
+    if (impl_->has_prev_best) {
+        const auto& prev_bid = impl_->prev_best_bid;
+        const auto& prev_ask = impl_->prev_best_ask;
+        if (snapshot.best_bid.has_value() && prev_bid.has_value()) {
+            if (snapshot.best_bid->price >= prev_bid->price) {
+                ofi += static_cast<double>(snapshot.best_bid->total_size);
+            }
+            if (snapshot.best_bid->price <= prev_bid->price) {
+                ofi -= static_cast<double>(prev_bid->total_size);
+            }
+        } else if (snapshot.best_bid.has_value()) {
+            ofi += static_cast<double>(snapshot.best_bid->total_size);
+        } else if (prev_bid.has_value()) {
+            ofi -= static_cast<double>(prev_bid->total_size);
+        }
+        if (snapshot.best_ask.has_value() && prev_ask.has_value()) {
+            if (snapshot.best_ask->price <= prev_ask->price) {
+                ofi -= static_cast<double>(snapshot.best_ask->total_size);
+            }
+            if (snapshot.best_ask->price >= prev_ask->price) {
+                ofi += static_cast<double>(prev_ask->total_size);
+            }
+        } else if (snapshot.best_ask.has_value()) {
+            ofi -= static_cast<double>(snapshot.best_ask->total_size);
+        } else if (prev_ask.has_value()) {
+            ofi += static_cast<double>(prev_ask->total_size);
+        }
+    }
+    row.ofi_event = ofi;
+    double evicted_ofi = 0.0;
+    if (impl_->push_ofi(ofi, evicted_ofi)) {
+        impl_->rolling_ofi_sum -= evicted_ofi;
+    }
+    impl_->rolling_ofi_sum += ofi;
+    row.rolling_ofi = impl_->rolling_ofi_sum;
+    impl_->prev_best_bid = snapshot.best_bid;
+    impl_->prev_best_ask = snapshot.best_ask;
+    impl_->has_prev_best = true;
+
     Impl::TradeContribution contribution{};
     if (is_trade_event(message.event_type) && message.size > 0 && message.price > 0) {
         contribution.quantity = static_cast<double>(message.size);
@@ -350,24 +428,42 @@ void AnalyticsEngine::on_message(
         row.trade_flow_imbalance = impl_->rolling_signed_quantity / impl_->rolling_quantity;
     }
 
+    // Realized volatility is the root of the summed squared log returns of the
+    // consecutive mid samples inside the window. That sum is maintained
+    // INCREMENTALLY: recomputing it per message is O(window) and therefore
+    // O(n^2) over a session, which is invisible on small level-N fixtures but
+    // dominates on full-depth data (a 300s window on MSFT MBO holds ~50k
+    // samples, so the naive form spent ~165us per message on std::log alone).
+    // Pushing adds the arriving pair; evicting subtracts the departing pair.
     if (snapshot.mid_price.has_value() && *snapshot.mid_price > 0.0) {
-        impl_->mid_window.emplace_back(Impl::MidSample{message.timestamp, *snapshot.mid_price});
+        const double incoming = *snapshot.mid_price;
+        if (!impl_->mid_window.empty()) {
+            const double previous = impl_->mid_window.back().mid_price;
+            if (previous > 0.0) {
+                const double log_return = std::log(incoming / previous);
+                impl_->rolling_sq_log_return += log_return * log_return;
+            }
+        }
+        impl_->mid_window.emplace_back(Impl::MidSample{message.timestamp, incoming});
     }
     while (!impl_->mid_window.empty() &&
            impl_->mid_window.front().timestamp < (message.timestamp - config_.realized_vol_window_seconds)) {
+        // the pair (front, front+1) leaves the window along with `front`
+        if (impl_->mid_window.size() >= 2) {
+            const double leaving = impl_->mid_window.front().mid_price;
+            const double successor = impl_->mid_window[1].mid_price;
+            if (leaving > 0.0 && successor > 0.0) {
+                const double log_return = std::log(successor / leaving);
+                impl_->rolling_sq_log_return -= log_return * log_return;
+            }
+        }
         impl_->mid_window.pop_front();
     }
     if (impl_->mid_window.size() >= 2) {
-        double realized = 0.0;
-        for (std::size_t index = 1; index < impl_->mid_window.size(); ++index) {
-            const double previous = impl_->mid_window[index - 1].mid_price;
-            const double current = impl_->mid_window[index].mid_price;
-            if (previous > 0.0 && current > 0.0) {
-                const double log_return = std::log(current / previous);
-                realized += log_return * log_return;
-            }
-        }
-        row.rolling_realized_vol = std::sqrt(realized);
+        // clamp: repeated add/subtract can drift a hair below zero
+        row.rolling_realized_vol = std::sqrt(std::max(impl_->rolling_sq_log_return, 0.0));
+    } else {
+        impl_->rolling_sq_log_return = 0.0;
     }
 
 }
@@ -401,7 +497,7 @@ void write_analytics_csv(const std::vector<AnalyticsRow>& rows, const std::strin
 
     output << "timestamp,best_bid,best_ask,spread,mid,bid_depth_1,bid_depth_5,bid_depth_10,"
               "ask_depth_1,ask_depth_5,ask_depth_10,order_imbalance,rolling_vwap,trade_flow_imbalance,"
-              "rolling_realized_vol\n";
+              "rolling_realized_vol,ofi_event,rolling_ofi\n";
     output << std::fixed << std::setprecision(6);
     for (const AnalyticsRow& row : rows) {
         output << row.timestamp << ',';
@@ -426,6 +522,7 @@ void write_analytics_csv(const std::vector<AnalyticsRow>& rows, const std::strin
         write_optional(output, row.trade_flow_imbalance);
         output << ',';
         write_optional(output, row.rolling_realized_vol);
+        output << ',' << row.ofi_event << ',' << row.rolling_ofi;
         output << '\n';
     }
 }
