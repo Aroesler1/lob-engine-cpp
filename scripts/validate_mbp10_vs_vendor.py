@@ -19,31 +19,31 @@ in databento_to_lobster.py. Vendor MBP-10 emits a row only for events that
 change the top ten, so vendor rows are a subset of engine rows and the engine is
 sampled at the vendor's timestamps.
 
-CURRENT RESULT -- READ BEFORE CITING THIS
-----------------------------------------
+CURRENT RESULT
+--------------
 On MSFT 2024-06-03, with exact sequence alignment, engine-derived MBP-10 agrees
-with Databento's own MBP-10 on 98.23% of compared cells (51.1M of 52.0M).
+with Databento's own MBP-10 on 99.74% of compared cells (51.9M of 52.0M).
 
-That is NOT a clean validation and is not presented as one. The residual 1.77%
-is only partly explained:
+That figure was 98.23% until the converter stopped double-counting executions.
+Databento emits THREE records for one displayed execution: a T print, an F fill
+against the resting order, and a C removing that same quantity from the book.
+Verified across the session: 100% of sequences carrying an F also carry a C, and
+99.6% of those match the F on price AND size. Applying both the F and the C
+reduced the resting order twice, so engine depth ran systematically below the
+vendor's -- the engine was smaller in 87,583 of 98,102 mismatches. Dropping the
+execution-mirror cancel fixed it.
 
-  - Prices agree far better than sizes (98.99% vs 92.46% at level 0), so the
-    book's structure is right while quantities drift.
-  - Where they differ, the engine is smaller in 87,583 of 98,102 cases
-    (median -6 shares), i.e. the engine removes liquidity the vendor still shows.
-  - 29,794 of those mismatches sit on a sequence carrying a fill, and in 20,270
-    of them the gap equals the fill size exactly -- consistent with the vendor
-    reporting the pre-trade book on trade events while the engine reports
-    post-trade. That accounts for roughly a fifth of the disagreement.
-  - The remaining 68,308 mismatches are NOT on fill sequences and remain
-    unexplained.
+The remaining 0.26% is concentrated at the touch (level 0 bid size 98.40%,
+against ~99.77% at every deeper level) and is consistent with the vendor
+reporting the pre-trade book on trade events while the engine reports
+post-trade, which was measured earlier as accounting for roughly a fifth of the
+old residual.
 
-Ruled out so far: cancel semantics (Databento `C` carries the delta cancelled
-and never exceeds the remaining size -- verified across 1,925,732 cancels, zero
-over-cancels), and modify handling (this session contains no `M` records).
-
-Until the residual is explained, this harness is a diagnostic, not a proof of
-correctness, and the README should not claim vendor-verified reconstruction.
+Ruled out along the way: cancel semantics generally (Databento `C` carries the
+delta cancelled and never exceeds the remaining size -- verified over 1,925,732
+cancels with zero over-cancels), modify handling (no `M` records in this
+session), and price truncation (zero sub-penny prices, so the 1e-9 to 1e-4
+conversion is lossless).
 
 Usage:
     python scripts/validate_mbp10_vs_vendor.py \

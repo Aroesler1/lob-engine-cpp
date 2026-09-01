@@ -54,6 +54,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import collections
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -97,13 +98,35 @@ def collect_filled_sequences(path: Path) -> set[int]:
     return {r.sequence for r in _iter_records(path) if _as_char(r.action) == "F"}
 
 
+def collect_execution_cancels(path: Path) -> collections.Counter:
+    """Multiset of (sequence, price, size) for F records.
+
+    Databento emits THREE records for one displayed execution: a T print, an F
+    fill against the resting order, and a C removing that same quantity from the
+    book. Verified on MSFT 2024-06-03: 100% of sequences carrying an F also
+    carry a C, and 99.6% of those match the F on both price and size.
+
+    Applying the F and the C both reduces the resting order twice, so the book
+    loses double the executed size. It is the same duplication as the T/F pair,
+    one layer deeper, and it is why engine depth ran systematically below the
+    vendor's.
+    """
+    counts: collections.Counter = collections.Counter()
+    for rec in _iter_records(path):
+        if _as_char(rec.action) == "F":
+            counts[(rec.sequence, rec.price, rec.size)] += 1
+    return counts
+
+
 def convert(path: Path, out_path: Path, sequence_out: Path | None = None) -> dict[str, int]:
     filled = collect_filled_sequences(path)
+    execution_cancels = collect_execution_cancels(path)
 
     stats = {
         "records": 0, "emitted": 0, "adds": 0, "cancels": 0,
         "displayed_fills": 0, "hidden_trades": 0,
-        "duplicate_prints_dropped": 0, "book_clears": 0,
+        "duplicate_prints_dropped": 0, "duplicate_cancels_dropped": 0,
+        "book_clears": 0,
         "modifies": 0, "unsided": 0, "skipped_other": 0,
     }
     midnight = None
@@ -134,6 +157,17 @@ def convert(path: Path, out_path: Path, sequence_out: Path | None = None) -> dic
                 # rather than silently mistranslated.
                 stats["modifies"] += 1
                 continue
+
+            if action == "C":
+                # a cancel that mirrors a fill at the same sequence, price and
+                # size is the book-removal half of that execution, already
+                # applied by the F; consuming it from the multiset keeps a
+                # genuine same-sequence cancel of equal size intact
+                key = (rec.sequence, rec.price, rec.size)
+                if execution_cancels.get(key, 0) > 0:
+                    execution_cancels[key] -= 1
+                    stats["duplicate_cancels_dropped"] += 1
+                    continue
 
             if action == "T":
                 if rec.sequence in filled:

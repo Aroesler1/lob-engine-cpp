@@ -197,6 +197,37 @@ academic sample, mirrored in several public research repos.
 
 **Replay**: all 668,765 messages parse with 0 malformed rows.
 
+## Vendor cross-check: 99.74% agreement on MBP-10 (2026-09)
+
+Databento derives every schema from MBO, so their MBP-10 and a book built here
+from their MBO are two independent derivations of one source. Agreement is a
+real correctness check on the book logic rather than a self-consistency check.
+
+`scripts/validate_mbp10_vs_vendor.py` diffs them, aligned exactly on the venue
+`sequence` (many MBO events share a `ts_recv`, so timestamp matching compares
+the engine at a different point in the stream and manufactures disagreement).
+
+**Result: 99.74% of 52.0M compared cells match** on MSFT 2024-06-03.
+
+Getting there found a real bug. The figure was 98.23% until the converter
+stopped double-counting executions. **Databento emits three records for one
+displayed execution**: a `T` print, an `F` fill against the resting order, and a
+`C` removing that same quantity from the book. Across the session, 100% of
+sequences carrying an `F` also carry a `C`, and 99.6% of those match on price
+and size. Applying both reduced the resting order twice, which is why engine
+depth ran systematically below the vendor's — smaller in 87,583 of 98,102
+mismatches, median 6 shares.
+
+That is the same duplication as the `T`/`F` pair one layer deeper, and it is
+invisible without a vendor-derived book to diff against.
+
+The remaining 0.26% concentrates at the touch (level 0 bid size 98.40%, against
+~99.77% at every deeper level) and is consistent with the vendor reporting the
+pre-trade book on trade events while the engine reports post-trade. Ruled out
+along the way: general cancel semantics (1,925,732 cancels, zero over-cancels),
+modify handling (no `M` records this session), and price truncation (zero
+sub-penny prices, so the fixed-point conversion is lossless).
+
 ## Multi-level integrated OFI (2026-09)
 
 Cont, Cucuringu and Zhang ([QF 2023](https://arxiv.org/abs/2112.13213)) show that
