@@ -195,10 +195,38 @@ The engine was run against the canonical LOBSTER sample day (MSFT
 The files are not checked in (~200 MB); they are the standard LOBSTER
 academic sample, mirrored in several public research repos.
 
-**Replay**: all 668,765 messages parse with 0 malformed rows; full-day
-replay throughput measured locally (Apple clang, `-O2`, M-series laptop)
-was ~14.4M msgs/s (`map`) and ~15.1M msgs/s (`flat_vector`). Treat as
-order-of-magnitude local numbers, not publishable benchmarks.
+**Replay**: all 668,765 messages parse with 0 malformed rows.
+
+## Performance on full-depth data (Databento XNAS.ITCH MBO, 2026-08)
+
+Aggregate throughput is the wrong headline for an order book engine: it hides
+the tail, and comparable public engines quote latency percentiles. Both figures
+below are reported because they answer different questions, and quoting only one
+would mislead. MSFT 2024-06-03, 3,933,364 messages, `map` backend, 8 trials with
+2 discarded as warmup (`scripts/latency_profile.py`):
+
+| | p50 | p99 | max | implied throughput |
+|---|---|---|---|---|
+| replay only (book apply) | 124 ns/msg | 126 ns/msg | 126 ns/msg | 8.05M msgs/sec |
+| end to end (parse + replay + startup) | 1,048 ns/msg | 1,063 ns/msg | 1,063 ns/msg | 954k msgs/sec |
+
+Parsing a 157 MB CSV dominates end-to-end cost by roughly 8x. Quoting only the
+replay figure would overstate what a user waits for; quoting only end-to-end
+would understate the engine.
+
+These are amortised per-message costs across whole replays, not a timestamped
+per-`apply()` histogram, so they bound the mean rather than the true tail. They
+are single-threaded userspace timings on an unpinned laptop core: comparable
+across commits on this machine, not across machines or against colocated
+production systems.
+
+### Backend choice depends on book depth
+
+On full-depth MBO the `map` backend beats `flat_vector` by 6.6x (7.93M vs 1.21M
+msgs/sec on an identical 200k slice, both producing byte-identical final book
+state). The flat sorted vector's O(n) insert is competitive only while the
+number of live price levels stays small, which level-N sample files enforce and
+real full-depth data does not.
 
 **Book reconstruction vs the vendor's own orderbook rows**
 (`scripts/validate_l1_reconstruction.py`): LOBSTER message streams begin at
