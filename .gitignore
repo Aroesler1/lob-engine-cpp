@@ -48,3 +48,6 @@ venv/
 /report/*.txt
 /report/generated/
 /reports/
+
+# Databento extracts: licensed data, and MBO is ~70MB compressed per symbol-day
+data/databento/

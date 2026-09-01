@@ -69,6 +69,56 @@ void test_trade_metrics_and_realized_vol_are_populated() {
     assert(rows.back().rolling_realized_vol.has_value());
 }
 
+// The rolling realized-vol sum is maintained incrementally (add on push,
+// subtract on eviction) because recomputing it per message is O(window) and so
+// O(n^2) over a session. This pins the incremental result to an independent
+// recomputation from scratch AFTER the window has evicted samples -- eviction
+// is the half an incremental accumulator gets wrong.
+void test_incremental_realized_vol_matches_recomputation() {
+    lob::AnalyticsConfig config;
+    config.realized_vol_window_seconds = 5.0;
+
+    std::vector<lob::LobsterMessage> messages;
+    for (int i = 0; i < 40; ++i) {
+        const lob::Price bid = 10000 + (i % 7) * 10;
+        const lob::Price ask = bid + 20;
+        const double t = 100.0 + static_cast<double>(i) * 0.5;  // 20s span vs 5s window
+        messages.push_back({t, lob::EventType::NewOrder, 2 * i + 1, 50, bid, lob::Side::Buy});
+        messages.push_back({t, lob::EventType::NewOrder, 2 * i + 2, 50, ask, lob::Side::Sell});
+    }
+
+    lob::MapOrderBook book;
+    const std::vector<lob::AnalyticsRow> rows = lob::replay_with_analytics(messages, book, config);
+    assert(rows.size() == messages.size());
+
+    // rebuild the surviving window from the emitted mids, then sum directly
+    const double final_ts = messages.back().timestamp;
+    std::vector<double> window_mids;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].mid_price.has_value() &&
+            messages[i].timestamp >= final_ts - config.realized_vol_window_seconds) {
+            window_mids.push_back(*rows[i].mid_price);
+        }
+    }
+
+    double expected = 0.0;
+    for (std::size_t i = 1; i < window_mids.size(); ++i) {
+        const double r = std::log(window_mids[i] / window_mids[i - 1]);
+        expected += r * r;
+    }
+    expected = std::sqrt(expected);
+
+    assert(rows.back().rolling_realized_vol.has_value());
+    assert(almost_equal(*rows.back().rolling_realized_vol, expected, 1e-9));
+
+    // repeated add/subtract must never drive the accumulator negative
+    for (const lob::AnalyticsRow& row : rows) {
+        if (row.rolling_realized_vol.has_value()) {
+            assert(*row.rolling_realized_vol >= 0.0);
+        }
+    }
+}
+
 void assert_rows_match(const lob::AnalyticsRow& lhs, const lob::AnalyticsRow& rhs) {
     assert(lhs.timestamp == rhs.timestamp);
     assert(lhs.best_bid == rhs.best_bid);
@@ -522,6 +572,7 @@ void test_prediction_report_writer_emits_expected_header_and_rows() {
 int main() {
     test_analytics_rows_cover_every_message();
     test_trade_metrics_and_realized_vol_are_populated();
+    test_incremental_realized_vol_matches_recomputation();
     test_analytics_outputs_match_across_backends();
     test_ofi_hand_computed_sequence();
     test_rolling_ofi_evicts_beyond_window();

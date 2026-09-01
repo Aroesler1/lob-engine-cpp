@@ -114,6 +114,10 @@ public:
         return values_[start_index_];
     }
 
+    const T& back() const {
+        return values_.back();
+    }
+
     const T& operator[](std::size_t index) const {
         return values_[start_index_ + index];
     }
@@ -295,6 +299,7 @@ struct AnalyticsEngine::Impl {
         rolling_quantity = 0.0;
         rolling_signed_quantity = 0.0;
         rolling_ofi_sum = 0.0;
+        rolling_sq_log_return = 0.0;
         has_prev_best = false;
         prev_best_bid.reset();
         prev_best_ask.reset();
@@ -308,6 +313,8 @@ struct AnalyticsEngine::Impl {
     std::size_t ofi_window_head{0};
     std::size_t ofi_window_size{0};
     double rolling_ofi_sum{0.0};
+    // running sum of squared log returns across consecutive mids in the window
+    double rolling_sq_log_return{0.0};
     bool has_prev_best{false};
     std::optional<OrderBookLevel> prev_best_bid;
     std::optional<OrderBookLevel> prev_best_ask;
@@ -421,24 +428,42 @@ void AnalyticsEngine::on_message(
         row.trade_flow_imbalance = impl_->rolling_signed_quantity / impl_->rolling_quantity;
     }
 
+    // Realized volatility is the root of the summed squared log returns of the
+    // consecutive mid samples inside the window. That sum is maintained
+    // INCREMENTALLY: recomputing it per message is O(window) and therefore
+    // O(n^2) over a session, which is invisible on small level-N fixtures but
+    // dominates on full-depth data (a 300s window on MSFT MBO holds ~50k
+    // samples, so the naive form spent ~165us per message on std::log alone).
+    // Pushing adds the arriving pair; evicting subtracts the departing pair.
     if (snapshot.mid_price.has_value() && *snapshot.mid_price > 0.0) {
-        impl_->mid_window.emplace_back(Impl::MidSample{message.timestamp, *snapshot.mid_price});
+        const double incoming = *snapshot.mid_price;
+        if (!impl_->mid_window.empty()) {
+            const double previous = impl_->mid_window.back().mid_price;
+            if (previous > 0.0) {
+                const double log_return = std::log(incoming / previous);
+                impl_->rolling_sq_log_return += log_return * log_return;
+            }
+        }
+        impl_->mid_window.emplace_back(Impl::MidSample{message.timestamp, incoming});
     }
     while (!impl_->mid_window.empty() &&
            impl_->mid_window.front().timestamp < (message.timestamp - config_.realized_vol_window_seconds)) {
+        // the pair (front, front+1) leaves the window along with `front`
+        if (impl_->mid_window.size() >= 2) {
+            const double leaving = impl_->mid_window.front().mid_price;
+            const double successor = impl_->mid_window[1].mid_price;
+            if (leaving > 0.0 && successor > 0.0) {
+                const double log_return = std::log(successor / leaving);
+                impl_->rolling_sq_log_return -= log_return * log_return;
+            }
+        }
         impl_->mid_window.pop_front();
     }
     if (impl_->mid_window.size() >= 2) {
-        double realized = 0.0;
-        for (std::size_t index = 1; index < impl_->mid_window.size(); ++index) {
-            const double previous = impl_->mid_window[index - 1].mid_price;
-            const double current = impl_->mid_window[index].mid_price;
-            if (previous > 0.0 && current > 0.0) {
-                const double log_return = std::log(current / previous);
-                realized += log_return * log_return;
-            }
-        }
-        row.rolling_realized_vol = std::sqrt(realized);
+        // clamp: repeated add/subtract can drift a hair below zero
+        row.rolling_realized_vol = std::sqrt(std::max(impl_->rolling_sq_log_return, 0.0));
+    } else {
+        impl_->rolling_sq_log_return = 0.0;
     }
 
 }
