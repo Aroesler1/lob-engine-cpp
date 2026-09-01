@@ -22,6 +22,7 @@ struct CliOptions {
     std::size_t depth{10};
     std::size_t repeats{1};
     std::string analytics_out;
+    std::string book_out;
     std::size_t trade_window_messages{1000};
     double realized_vol_window_seconds{300.0};
     std::vector<int> prediction_horizons_messages;
@@ -33,7 +34,8 @@ void print_usage() {
     std::cerr
         << "Usage: lob_engine <lobster_csv_file> [--backend map|flat|both] [--depth N] [--repeat N] "
            "[--analytics-out PATH] [--trade-window-messages N] [--realized-vol-window-seconds N] "
-           "[--prediction-report-out PATH] [--prediction-horizons H1,H2,...] [--seed-book ORDERBOOK_CSV]\n";
+           "[--prediction-report-out PATH] [--prediction-horizons H1,H2,...] [--seed-book ORDERBOOK_CSV] "
+           "[--book-out PATH]\n";
 }
 
 std::optional<std::size_t> parse_positive_size(const std::string& value) {
@@ -199,6 +201,15 @@ bool parse_args(int argc, char* argv[], CliOptions& options, std::string& error)
             continue;
         }
 
+        if (arg == "--book-out") {
+            if (index + 1 >= argc) {
+                error = "--book-out requires an output csv path";
+                return false;
+            }
+            options.book_out = argv[++index];
+            continue;
+        }
+
         if (arg == "--seed-book") {
             if (index + 1 >= argc) {
                 error = "--seed-book requires a LOBSTER orderbook csv path";
@@ -278,6 +289,55 @@ std::string backend_output_path(const std::string& base, lob::OrderBookBackend b
 }
 
 }  // namespace
+
+
+// Emit the top-N book levels after every message, in Databento MBP-10 column
+// order (bid_px_i, bid_sz_i, ask_px_i, ask_sz_i). This exists so the engine's
+// self-derived depth can be diffed byte-for-byte against a vendor's own MBP-10
+// for the same session -- Databento derives every schema from MBO, so an exact
+// match is the strongest available correctness check on the book logic.
+void write_book_levels_csv(
+    const std::vector<lob::LobsterMessage>& messages,
+    const lob::OrderBookBuildConfig& build_config,
+    lob::OrderBookBackend backend,
+    std::size_t depth,
+    const std::string& path) {
+    std::ofstream out(path);
+    if (!out) {
+        std::cerr << "Could not open book output: " << path << '\n';
+        return;
+    }
+
+    out << "timestamp";
+    for (std::size_t level = 0; level < depth; ++level) {
+        out << ",bid_px_" << level << ",bid_sz_" << level
+            << ",ask_px_" << level << ",ask_sz_" << level;
+    }
+    out << '\n';
+    out << std::fixed << std::setprecision(9);
+
+    std::unique_ptr<lob::OrderBook> book = lob::make_order_book(backend, build_config);
+    for (const lob::LobsterMessage& message : messages) {
+        book->apply(message);
+        const lob::BookSnapshot snapshot = book->snapshot(depth);
+        out << message.timestamp;
+        for (std::size_t level = 0; level < depth; ++level) {
+            if (level < snapshot.bids.size()) {
+                out << ',' << snapshot.bids[level].price << ',' << snapshot.bids[level].total_size;
+            } else {
+                out << ",,";
+            }
+            if (level < snapshot.asks.size()) {
+                out << ',' << snapshot.asks[level].price << ',' << snapshot.asks[level].total_size;
+            } else {
+                out << ",,";
+            }
+        }
+        out << '\n';
+    }
+    std::cout << "Book levels CSV=" << path << " depth=" << depth
+              << " rows=" << messages.size() << '\n';
+}
 
 int main(int argc, char* argv[]) {
     if (argc == 2 && std::string(argv[1]) == "--help") {
@@ -366,6 +426,15 @@ int main(int argc, char* argv[]) {
         std::cout << "Final top: bid=" << format_level(summary.final_snapshot.best_bid)
                   << " ask=" << format_level(summary.final_snapshot.best_ask)
                   << " active_orders=" << summary.final_snapshot.active_order_count << '\n';
+
+        if (!options.book_out.empty()) {
+            write_book_levels_csv(
+                messages,
+                build_config,
+                backend,
+                options.depth,
+                backend_output_path(options.book_out, backend, backends.size() > 1));
+        }
 
         const bool needs_post_replay_analytics =
             !options.analytics_out.empty() || !options.prediction_report_out.empty();

@@ -97,7 +97,7 @@ def collect_filled_sequences(path: Path) -> set[int]:
     return {r.sequence for r in _iter_records(path) if _as_char(r.action) == "F"}
 
 
-def convert(path: Path, out_path: Path) -> dict[str, int]:
+def convert(path: Path, out_path: Path, sequence_out: Path | None = None) -> dict[str, int]:
     filled = collect_filled_sequences(path)
 
     stats = {
@@ -107,6 +107,15 @@ def convert(path: Path, out_path: Path) -> dict[str, int]:
         "modifies": 0, "unsided": 0, "skipped_other": 0,
     }
     midnight = None
+
+    # Optional sidecar mapping each emitted LOBSTER row to its source MBO
+    # `sequence`. LOBSTER's message format has no field for it, but exact
+    # alignment against a vendor's own derived book needs a key that survives
+    # duplicate timestamps -- many MBO events share a ts_recv, so timestamp
+    # matching is lossy and silently compares different points in the stream.
+    seq_fh = sequence_out.open("w", encoding="utf-8") if sequence_out else None
+    if seq_fh:
+        seq_fh.write("row,sequence\n")
 
     with out_path.open("w", encoding="utf-8") as fh:
         for rec in _iter_records(path):
@@ -162,8 +171,12 @@ def convert(path: Path, out_path: Path) -> dict[str, int]:
                 f"{seconds:.9f},{event_type},{rec.order_id},"
                 f"{rec.size},{price},{direction}\n"
             )
+            if seq_fh:
+                seq_fh.write(f"{stats['emitted']},{rec.sequence}\n")
             stats["emitted"] += 1
 
+    if seq_fh:
+        seq_fh.close()
     return stats
 
 
@@ -172,6 +185,8 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("dbn_path", type=Path, help="Databento MBO .dbn or .dbn.zst file")
     parser.add_argument("--out", type=Path, required=True, help="output LOBSTER message CSV")
+    parser.add_argument("--sequence-out", type=Path, default=None,
+                        help="optional sidecar CSV mapping emitted row -> MBO sequence")
     args = parser.parse_args()
 
     if not args.dbn_path.exists():
@@ -179,7 +194,7 @@ def main() -> int:
         return 1
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    stats = convert(args.dbn_path, args.out)
+    stats = convert(args.dbn_path, args.out, args.sequence_out)
 
     width = max(len(k) for k in stats)
     print(f"{args.dbn_path.name} -> {args.out}")
