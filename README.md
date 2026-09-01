@@ -197,6 +197,58 @@ academic sample, mirrored in several public research repos.
 
 **Replay**: all 668,765 messages parse with 0 malformed rows.
 
+## Multi-level integrated OFI (2026-09)
+
+Cont, Cucuringu and Zhang ([QF 2023](https://arxiv.org/abs/2112.13213)) show that
+combining order flow imbalance across the top book levels into one integrated
+variable explains contemporaneous price impact far better than best-level OFI.
+`scripts/multi_level_ofi.py` reproduces that on Databento MBP-10 for one session
+(1,338,802 events). Vendor depth is used rather than this engine's
+reconstruction, so the result is a statement about the market rather than about
+the book-building code.
+
+**Contemporaneous R²** (price change regressed on trailing OFI over the same window):
+
+| horizon (events) | best level (L1) | naive sum | PCA integrated |
+|---|---|---|---|
+| 10 | 0.1121 | 0.2206 | **0.2231** |
+| 50 | 0.2852 | 0.4398 | **0.4430** |
+| 100 | 0.3519 | 0.5171 | **0.5195** |
+| 500 | 0.4130 | 0.5999 | **0.5997** |
+
+**Predictive R²** (next window's price change):
+
+| horizon (events) | best level (L1) | naive sum | PCA integrated |
+|---|---|---|---|
+| 10 | **0.0168** | 0.0141 | 0.0145 |
+| 50 | **0.0262** | 0.0234 | 0.0239 |
+| 100 | **0.0124** | 0.0113 | 0.0115 |
+| 500 | 0.0012 | 0.0038 | 0.0038 |
+
+Three readings, including one that cuts against the method:
+
+1. **Using the whole book roughly doubles contemporaneous explanatory power.**
+   At a 10-event horizon, R² goes from 0.11 to 0.22; at 500 events, 0.41 to 0.60.
+   The CCZ result reproduces cleanly.
+2. **The PCA integration is barely distinguishable from a naive sum**
+   (0.2231 vs 0.2206; 0.5997 vs 0.5999). The fitted weights run from +0.18 at
+   level 1 to +0.37 at level 10 — close enough to uniform that the first
+   principal component is nearly a plain sum. On this session the gain comes
+   from *using multiple levels at all*, not from how they are combined. That is
+   worth stating rather than presenting PCA as the source of the improvement.
+3. **Predictive power stays negligible, and L1 is marginally the best of the
+   three.** Multi-level integration helps explain impact; it does not help
+   forecast it.
+
+That third point is the same pattern this repository's L1 study found, and the
+same one the propagator calibration in the impact repository found on the same
+underlying feed: order flow explains contemporaneous returns strongly and
+predicts them barely at all. Three independent measurements, one conclusion.
+
+```bash
+python scripts/multi_level_ofi.py --vendor <mbp10.dbn.zst>
+```
+
 ## Performance on full-depth data (Databento XNAS.ITCH MBO, 2026-08)
 
 Aggregate throughput is the wrong headline for an order book engine: it hides
