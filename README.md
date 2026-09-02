@@ -338,17 +338,21 @@ python scripts/multi_level_ofi.py --vendor <mbp10.dbn.zst>
 Aggregate throughput is the wrong headline for an order book engine: it hides
 the tail, and comparable public engines quote latency percentiles. Both figures
 below are reported because they answer different questions, and quoting only one
-would mislead. MSFT 2024-06-03, 3,933,364 messages, `map` backend, 8 trials with
+would mislead. MSFT 2024-06-03, 3,862,854 messages, `map` backend, 8 trials with
 2 discarded as warmup (`scripts/latency_profile.py`):
 
 | | p50 | p99 | max | implied throughput |
 |---|---|---|---|---|
-| replay only (book apply) | 124 ns/msg | 126 ns/msg | 126 ns/msg | 8.05M msgs/sec |
-| end to end (parse + replay + startup) | 1,048 ns/msg | 1,063 ns/msg | 1,063 ns/msg | 954k msgs/sec |
+| replay only (book apply) | 127 ns/msg | 127 ns/msg | 127 ns/msg | 7.90M msgs/sec |
+| end to end (parse + replay + startup) | 1,085 ns/msg | 1,090 ns/msg | 1,090 ns/msg | 922k msgs/sec |
 
-Parsing a 157 MB CSV dominates end-to-end cost by roughly 8x. Quoting only the
+Parsing a 155 MB CSV dominates end-to-end cost by roughly 8.5x. Quoting only the
 replay figure would overstate what a user waits for; quoting only end-to-end
 would understate the engine.
+
+Re-measured after the dedup rekey changed the message count. Repeat runs on this
+machine move p50 by 1-3 ns/msg, so treat the third digit as noise rather than
+signal.
 
 These are amortised per-message costs across whole replays, not a timestamped
 per-`apply()` histogram, so they bound the mean rather than the true tail. They
@@ -358,11 +362,17 @@ production systems.
 
 ### Backend choice depends on book depth
 
-On full-depth MBO the `map` backend beats `flat_vector` by 6.6x (7.93M vs 1.21M
-msgs/sec on an identical 200k slice, both producing byte-identical final book
-state). The flat sorted vector's O(n) insert is competitive only while the
-number of live price levels stays small, which level-N sample files enforce and
-real full-depth data does not.
+On full-depth MBO the `map` backend beats `flat_vector` by roughly **7.6x**
+(median of 5 trials on an identical 200k slice: 6.96M vs 0.92M msgs/sec, both
+producing byte-identical final book state). Trial-to-trial spread is wide on
+this hardware — 6.63-7.33M for `map` against 0.81-1.08M for `flat_vector`, so
+the ratio itself ranges 6.1x to 9.0x. The order of magnitude is the finding;
+the second digit is not. An earlier version of this line quoted a single run as
+"6.6x", which read as more precise than the measurement supports.
+
+The flat sorted vector's O(n) insert is competitive only while the number of
+live price levels stays small, which level-N sample files enforce and real
+full-depth data does not.
 
 **Book reconstruction vs the vendor's own orderbook rows**
 (`scripts/validate_l1_reconstruction.py`): LOBSTER message streams begin at
