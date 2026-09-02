@@ -197,7 +197,7 @@ academic sample, mirrored in several public research repos.
 
 **Replay**: all 668,765 messages parse with 0 malformed rows.
 
-## Vendor cross-check: 99.99% agreement on MBP-10 (2026-09)
+## Vendor cross-check: exact agreement on MBP-10 (2026-09)
 
 Databento derives every schema from MBO, so their MBP-10 and a book built here
 from their MBO are two independent derivations of one source. Agreement is a
@@ -207,31 +207,34 @@ real correctness check on the book logic rather than a self-consistency check.
 `sequence` (many MBO events share a `ts_recv`, so timestamp matching compares
 the engine at a different point in the stream and manufactures disagreement).
 
-**Result: 99.9938% of 53.6M compared cells match** on MSFT 2024-06-03.
+**Result: 100.0000% of 53,551,466 compared cells match** on MSFT 2024-06-03 —
+every cell, at every one of the ten levels, under both alignments.
 
 | alignment | agreement | cells |
 |---|---|---|
-| vendor book rows (`A`/`C`/`F`) vs engine post-event | 99.9944% | 49,608,651 / 49,611,426 |
-| vendor `T` prints vs engine pre-fill | 99.9861% | 3,939,494 / 3,940,040 |
-| **combined** | **99.9938%** | 53,548,145 / 53,551,466 |
+| vendor book rows (`A`/`C`/`F`) vs engine post-event | 100.0000% | 49,611,426 / 49,611,426 |
+| vendor `T` prints vs engine pre-fill | 100.0000% | 3,940,040 / 3,940,040 |
 
-Getting there took two fixes, one a real engine-input bug and one a measurement
-error of mine.
+Nothing is excluded to reach that number. Across 53,552,200 cell slots there are
+**zero** where one side reports a price level and the other calls it absent, and
+734 where both agree the level is absent.
+
+Getting here took three fixes, two in the engine's input and one in the harness
+that measures it. The sequence is the point: each wrong answer was disproved by
+a test rather than argued away.
 
 **1. Execution double-count (98.23% → 99.74%).** **Databento emits three MBO
 records for one displayed execution**: a `T` print, an `F` fill against the
-resting order, and a `C` removing that same quantity from the book. Across the
-session, 100% of sequences carrying an `F` also carry a `C`, and 99.6% of those
-match on price and size. Applying both reduced the resting order twice, which is
-why engine depth ran systematically below the vendor's — smaller in 87,583 of
-98,102 mismatches, median 6 shares. That is the same duplication as the `T`/`F`
-pair one layer deeper, and it is invisible without a vendor-derived book to diff
-against.
+resting order, and a `C` removing that same quantity from the book. Applying
+both reduced the resting order twice, which is why engine depth ran
+systematically below the vendor's — smaller in 87,583 of 98,102 mismatches. That
+is the same duplication as the `T`/`F` pair one layer deeper, and it is
+invisible without a vendor-derived book to diff against.
 
 **2. Mixed snapshot conventions in the harness (99.74% → 99.9938%).** An earlier
 version of this section attributed the residual 0.26% to the vendor reporting
-the pre-trade book while the engine reported post-trade. That explanation is
-wrong, and testing it is what found the real one: rolling the engine back to its
+the pre-trade book while the engine reported post-trade. That was wrong, and
+testing it is what found the real cause: rolling the engine back to its
 pre-trade state made agreement *worse*, 99.74% → 99.17%.
 
 The vendor's MBP-10 contains essentially no `F` rows (3 in the entire session).
@@ -240,23 +243,35 @@ and those two rows carry **different book states** — `T` the book before the
 execution, `C` the book after. Trade sequences split 60,292 emitting only `(T,)`
 against 38,209 emitting `(T, C)`, so keeping the last vendor row per sequence
 compared against a post-trade snapshot on some sequences and a pre-trade
-snapshot on others. That mixes conventions on roughly half of all at-touch
-fills, which is exactly where the old residual sat.
+snapshot on others. Aligned on the right row, the vendor's `C` row matched the
+engine's post-fill state on 100.000% of ask cells. The giveaway was the 3,001
+fills that fully consumed the touch: the vendor still showed the consumed price
+in **3,001 of 3,001**.
 
-Aligned on the right row, the vendor's `C` row matches the engine's post-fill
-state on **100.000% of ask cells and 99.995% of bid cells**. The giveaway was
-the 3,001 fills that fully consumed the touch: the vendor still showed the
-consumed price in **3,001 of 3,001**.
+**3. The dedup was keyed on the wrong field (99.9938% → 100.0000%).** The mirror
+cancel was matched on `(sequence, price, size)`, which catches 70,254 of 70,510
+fills — 99.64%, close enough to look finished. Each of the **256 misses** left a
+cancel in the stream that double-decremented a resting order, and the book then
+carried that error until the order left. A handful of events produced 3,321
+mismatched cells across 1,886 sequences, 1,585 of which were single-record
+sequences merely downstream of the damage.
 
-So the engine's book logic was already correct; the 0.26% was my measurement.
-The level-0 concentration that motivated the wrong hypothesis is gone — level 0
-now agrees at 99.98%, in line with every deeper level.
+Keying on `(sequence, order_id)` matches **70,510 of 70,510**, because the fill
+names the resting order it executed against and the mirror cancel removes
+quantity from that same order — so the pair necessarily agrees on the id, while
+price and size are only a proxy for it.
 
-Also ruled out: general cancel semantics (1,925,732 cancels, zero over-cancels),
-modify handling (no `M` records this session), price truncation (zero sub-penny
-prices, so the fixed-point conversion is lossless), and a dedup miss surviving
-into the book (a stray cancel appears in 0.6% of disagreeing blocks against 0.1%
-of agreeing ones).
+What made this findable was measuring distance rather than inspecting cases:
+mismatched sequences sat a median **15,055 sequences after the nearest dedup
+miss**, against **4,683,657** for sequences that agreed. Two competing
+explanations were tested and rejected first — modify records (there are none in
+this session) and multi-record sequence ordering, which turned out to be
+*under*-represented among the mismatches at 0.3×, and that is what redirected
+the search toward downstream drift.
+
+Also ruled out: general cancel semantics (1,925,732 cancels, zero over-cancels)
+and price truncation (zero sub-penny prices, so the fixed-point conversion is
+lossless).
 
 ```bash
 python scripts/validate_mbp10_vs_vendor.py \

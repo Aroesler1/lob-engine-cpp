@@ -12,7 +12,10 @@ Event mapping
 -------------
 Databento MBO `action`  ->  LOBSTER event type
     A (add)             ->  1  new limit order
-    C (cancel)          ->  2  partial cancel, carrying the cancelled size.
+    C (cancel)          ->  2  partial cancel, carrying the cancelled size,
+                               EXCEPT the cancel that mirrors a fill on the
+                               same order and sequence, which is the book half
+                               of that execution and is dropped.
                                The engine's reduce_order handles both partial
                                and full removal, so emitting the exact cancelled
                                quantity is strictly more faithful than guessing
@@ -99,22 +102,30 @@ def collect_filled_sequences(path: Path) -> set[int]:
 
 
 def collect_execution_cancels(path: Path) -> collections.Counter:
-    """Multiset of (sequence, price, size) for F records.
+    """Multiset of (sequence, order_id) for F records.
 
     Databento emits THREE records for one displayed execution: a T print, an F
     fill against the resting order, and a C removing that same quantity from the
-    book. Verified on MSFT 2024-06-03: 100% of sequences carrying an F also
-    carry a C, and 99.6% of those match the F on both price and size.
+    book. Applying the F and the C both reduces the resting order twice, so the
+    book loses double the executed size. It is the same duplication as the T/F
+    pair, one layer deeper.
 
-    Applying the F and the C both reduces the resting order twice, so the book
-    loses double the executed size. It is the same duplication as the T/F pair,
-    one layer deeper, and it is why engine depth ran systematically below the
-    vendor's.
+    The key is (sequence, order_id) because the F names the resting order it
+    executed against and the mirror C removes quantity from that same order, so
+    the pair necessarily agrees on the id. Keying on (sequence, price, size)
+    instead -- which an earlier version did -- looks almost as good and is not:
+    on MSFT 2024-06-03 it matches 70,254 of 70,510 fills (99.64%) against
+    70,510 of 70,510 (100.00%) for the id. Each of the 256 misses leaves a
+    mirror cancel in the stream that double-decrements a resting order, and the
+    book then carries that error until the order leaves. Those 256 events
+    accounted for most of the engine's remaining disagreement with the vendor:
+    mismatched sequences sat a median 15,055 sequences after the nearest miss,
+    against 4.7M for sequences that agreed.
     """
     counts: collections.Counter = collections.Counter()
     for rec in _iter_records(path):
         if _as_char(rec.action) == "F":
-            counts[(rec.sequence, rec.price, rec.size)] += 1
+            counts[(rec.sequence, rec.order_id)] += 1
     return counts
 
 
@@ -159,11 +170,11 @@ def convert(path: Path, out_path: Path, sequence_out: Path | None = None) -> dic
                 continue
 
             if action == "C":
-                # a cancel that mirrors a fill at the same sequence, price and
-                # size is the book-removal half of that execution, already
-                # applied by the F; consuming it from the multiset keeps a
-                # genuine same-sequence cancel of equal size intact
-                key = (rec.sequence, rec.price, rec.size)
+                # a cancel naming the same order as a fill on the same sequence
+                # is the book-removal half of that execution, already applied by
+                # the F; consuming it from the multiset keeps a genuine
+                # same-sequence cancel of the same order intact
+                key = (rec.sequence, rec.order_id)
                 if execution_cancels.get(key, 0) > 0:
                     execution_cancels[key] -= 1
                     stats["duplicate_cancels_dropped"] += 1
