@@ -197,7 +197,7 @@ academic sample, mirrored in several public research repos.
 
 **Replay**: all 668,765 messages parse with 0 malformed rows.
 
-## Vendor cross-check: 99.74% agreement on MBP-10 (2026-09)
+## Vendor cross-check: 99.99% agreement on MBP-10 (2026-09)
 
 Databento derives every schema from MBO, so their MBP-10 and a book built here
 from their MBO are two independent derivations of one source. Agreement is a
@@ -207,26 +207,64 @@ real correctness check on the book logic rather than a self-consistency check.
 `sequence` (many MBO events share a `ts_recv`, so timestamp matching compares
 the engine at a different point in the stream and manufactures disagreement).
 
-**Result: 99.74% of 52.0M compared cells match** on MSFT 2024-06-03.
+**Result: 99.9938% of 53.6M compared cells match** on MSFT 2024-06-03.
 
-Getting there found a real bug. The figure was 98.23% until the converter
-stopped double-counting executions. **Databento emits three records for one
-displayed execution**: a `T` print, an `F` fill against the resting order, and a
-`C` removing that same quantity from the book. Across the session, 100% of
-sequences carrying an `F` also carry a `C`, and 99.6% of those match on price
-and size. Applying both reduced the resting order twice, which is why engine
-depth ran systematically below the vendor's — smaller in 87,583 of 98,102
-mismatches, median 6 shares.
+| alignment | agreement | cells |
+|---|---|---|
+| vendor book rows (`A`/`C`/`F`) vs engine post-event | 99.9944% | 49,608,651 / 49,611,426 |
+| vendor `T` prints vs engine pre-fill | 99.9861% | 3,939,494 / 3,940,040 |
+| **combined** | **99.9938%** | 53,548,145 / 53,551,466 |
 
-That is the same duplication as the `T`/`F` pair one layer deeper, and it is
-invisible without a vendor-derived book to diff against.
+Getting there took two fixes, one a real engine-input bug and one a measurement
+error of mine.
 
-The remaining 0.26% concentrates at the touch (level 0 bid size 98.40%, against
-~99.77% at every deeper level) and is consistent with the vendor reporting the
-pre-trade book on trade events while the engine reports post-trade. Ruled out
-along the way: general cancel semantics (1,925,732 cancels, zero over-cancels),
-modify handling (no `M` records this session), and price truncation (zero
-sub-penny prices, so the fixed-point conversion is lossless).
+**1. Execution double-count (98.23% → 99.74%).** **Databento emits three MBO
+records for one displayed execution**: a `T` print, an `F` fill against the
+resting order, and a `C` removing that same quantity from the book. Across the
+session, 100% of sequences carrying an `F` also carry a `C`, and 99.6% of those
+match on price and size. Applying both reduced the resting order twice, which is
+why engine depth ran systematically below the vendor's — smaller in 87,583 of
+98,102 mismatches, median 6 shares. That is the same duplication as the `T`/`F`
+pair one layer deeper, and it is invisible without a vendor-derived book to diff
+against.
+
+**2. Mixed snapshot conventions in the harness (99.74% → 99.9938%).** An earlier
+version of this section attributed the residual 0.26% to the vendor reporting
+the pre-trade book while the engine reported post-trade. That explanation is
+wrong, and testing it is what found the real one: rolling the engine back to its
+pre-trade state made agreement *worse*, 99.74% → 99.17%.
+
+The vendor's MBP-10 contains essentially no `F` rows (3 in the entire session).
+It represents a displayed execution as a `T` print followed by a `C` removal,
+and those two rows carry **different book states** — `T` the book before the
+execution, `C` the book after. Trade sequences split 60,292 emitting only `(T,)`
+against 38,209 emitting `(T, C)`, so keeping the last vendor row per sequence
+compared against a post-trade snapshot on some sequences and a pre-trade
+snapshot on others. That mixes conventions on roughly half of all at-touch
+fills, which is exactly where the old residual sat.
+
+Aligned on the right row, the vendor's `C` row matches the engine's post-fill
+state on **100.000% of ask cells and 99.995% of bid cells**. The giveaway was
+the 3,001 fills that fully consumed the touch: the vendor still showed the
+consumed price in **3,001 of 3,001**.
+
+So the engine's book logic was already correct; the 0.26% was my measurement.
+The level-0 concentration that motivated the wrong hypothesis is gone — level 0
+now agrees at 99.98%, in line with every deeper level.
+
+Also ruled out: general cancel semantics (1,925,732 cancels, zero over-cancels),
+modify handling (no `M` records this session), price truncation (zero sub-penny
+prices, so the fixed-point conversion is lossless), and a dedup miss surviving
+into the book (a stray cancel appears in 0.6% of disagreeing blocks against 0.1%
+of agreeing ones).
+
+```bash
+python scripts/validate_mbp10_vs_vendor.py \
+    --engine-book /tmp/engine_book.csv \
+    --vendor data/databento/MSFT_2024-06-03_mbp10.dbn.zst \
+    --sequences /tmp/msft_seq.csv \
+    --messages data/databento/MSFT_2024-06-03_message.csv
+```
 
 ## Multi-level integrated OFI (2026-09)
 
