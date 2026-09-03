@@ -15,16 +15,28 @@ structural reason for the two to diverge.
 
 CURRENT RESULT
 --------------
-On MSFT 2024-06-03, with action-aware sequence alignment, engine-derived MBP-10
-agrees with Databento's own MBP-10 on 100.0000% of compared cells -- all
-53,551,466 of them, at every one of the ten levels:
+With action-aware sequence alignment, engine-derived MBP-10 agrees with
+Databento's own MBP-10 on 100.0000% of compared cells on BOTH sessions, at every
+one of the ten levels:
 
-    vendor book rows (A/C/F)  vs engine post-event    100.0000%
-    vendor T prints           vs engine pre-fill      100.0000%
+                        MSFT 2024-06-03      INTC 2024-08-02
+    agreement                 100.0000%            100.0000%
+    cells compared           53,551,466           60,128,762
+      A/C/F post-event       49,611,426           51,939,050
+      T prints pre-fill       3,940,040            8,189,712
+    both agree absent               734                4,638
+    ONE SIDE ONLY                     0                    0
 
-No cells are excluded to reach that: across 53,552,200 slots there are zero
-where one side reports a level and the other calls it absent, and 734 where both
-agree the level is absent.
+No cells are excluded to reach either number. The last row is what keeps the
+percentage honest -- it is computed over mutually-present cells, so a
+disagreement about whether a level exists at all would otherwise be invisible.
+
+The three bugs below were found on MSFT. INTC was run afterwards with no further
+changes and reached 100.0000% on the first attempt, which is the evidence that
+they were corrections to a misread of the vendor's event model rather than
+adjustments fitted to one session. INTC is also a very different book: a
+large-tick name sitting at a one-tick spread 81% of the session with 2,400-3,000
+shares at the touch, against MSFT's 1% and 63-68.
 
 Three bugs had to be fixed to get there, two in the engine's input and one in
 this harness.
@@ -86,6 +98,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -171,24 +184,40 @@ def pre_fill_rows(sequences: np.ndarray, event_types: np.ndarray,
     return np.maximum(np.where(has_fill, first_fill - 1, last), 0)
 
 
+class Counts(NamedTuple):
+    """Per-level cell accounting for one alignment.
+
+    `compared` only covers slots where BOTH sides report a level, so an
+    agreement percentage on its own says nothing about slots where one side
+    reports a level and the other calls it absent. Those are counted separately
+    as `one_sided`: a non-zero value there is a real disagreement about the
+    shape of the book that the percentage would hide.
+    """
+    matched: np.ndarray
+    compared: np.ndarray
+    one_sided: np.ndarray
+    both_absent: np.ndarray
+
+
 def compare(vendor: pd.DataFrame, engine: pd.DataFrame, sequences: np.ndarray,
-            pick: np.ndarray, first: np.ndarray, depth: int) -> tuple[np.ndarray, np.ndarray]:
-    """Per-level (matched, compared) cell counts for one alignment."""
+            pick: np.ndarray, first: np.ndarray, depth: int) -> Counts:
     snapshot = engine.iloc[pick].reset_index(drop=True)
     snapshot.insert(0, "sequence", sequences[first])
     merged = vendor.merge(snapshot, on="sequence", suffixes=("_v", "_e"))
 
-    matched = np.zeros(depth, dtype=np.int64)
-    compared = np.zeros(depth, dtype=np.int64)
+    counts = Counts(*(np.zeros(depth, dtype=np.int64) for _ in range(4)))
     for level in range(depth):
         for tag in ("bid", "ask"):
             for field in ("px", "sz"):
                 col = f"{tag}_{field}_{level}"
                 v, e = merged[f"{col}_v"], merged[f"{col}_e"]
-                both = v.notna() & e.notna()
-                compared[level] += int(both.sum())
-                matched[level] += int((both & np.isclose(v, e, rtol=0, atol=0.5)).sum())
-    return matched, compared
+                has_v, has_e = v.notna(), e.notna()
+                both = has_v & has_e
+                counts.compared[level] += int(both.sum())
+                counts.matched[level] += int((both & np.isclose(v, e, rtol=0, atol=0.5)).sum())
+                counts.one_sided[level] += int((has_v ^ has_e).sum())
+                counts.both_absent[level] += int((~has_v & ~has_e).sum())
+    return counts
 
 
 def main() -> int:
@@ -224,17 +253,19 @@ def main() -> int:
         merged = pd.merge_asof(vendor, engine, on="timestamp", direction="backward",
                                suffixes=("_v", "_e"))
         print("WARNING: no --sequences sidecar; falling back to timestamp alignment\n")
-        matched = np.zeros(args.depth, dtype=np.int64)
-        compared = np.zeros(args.depth, dtype=np.int64)
+        counts = Counts(*(np.zeros(args.depth, dtype=np.int64) for _ in range(4)))
         for level in range(args.depth):
             for tag in ("bid", "ask"):
                 for field in ("px", "sz"):
                     col = f"{tag}_{field}_{level}"
                     v, e = merged[f"{col}_v"], merged[f"{col}_e"]
-                    both = v.notna() & e.notna()
-                    compared[level] += int(both.sum())
-                    matched[level] += int((both & np.isclose(v, e, rtol=0, atol=0.5)).sum())
-        groups = {"timestamp-aligned": (matched, compared)}
+                    has_v, has_e = v.notna(), e.notna()
+                    both = has_v & has_e
+                    counts.compared[level] += int(both.sum())
+                    counts.matched[level] += int((both & np.isclose(v, e, rtol=0, atol=0.5)).sum())
+                    counts.one_sided[level] += int((has_v ^ has_e).sum())
+                    counts.both_absent[level] += int((~has_v & ~has_e).sum())
+        groups = {"timestamp-aligned": counts}
     else:
         sequences = pd.read_csv(args.sequences)["sequence"].to_numpy()
         engine = engine.reset_index(drop=True)
@@ -267,8 +298,8 @@ def main() -> int:
     width = max(len(name) for name in groups)
     total_matched = total_compared = 0
     print(f"{'alignment':<{width}}  {'agreement':>10}  {'cells':>25}")
-    for name, (matched, compared) in groups.items():
-        m, c = int(matched.sum()), int(compared.sum())
+    for name, counts in groups.items():
+        m, c = int(counts.matched.sum()), int(counts.compared.sum())
         total_matched += m
         total_compared += c
         print(f"{name:<{width}}  {100 * m / c:9.4f}%  {m:>11,}/{c:<13,}")
@@ -277,13 +308,21 @@ def main() -> int:
         print(f"{'combined':<{width}}  {100 * total_matched / total_compared:9.4f}%  "
               f"{total_matched:>11,}/{total_compared:<13,}")
 
+    # A percentage over mutually-present cells can hide a disagreement about
+    # whether a level exists at all, so account for every slot explicitly.
+    one_sided = sum(int(c.one_sided.sum()) for c in groups.values())
+    both_absent = sum(int(c.both_absent.sum()) for c in groups.values())
+    print(f"\nslots {total_compared + one_sided + both_absent:,}  "
+          f"= compared {total_compared:,}  + both agree absent {both_absent:,}  "
+          f"+ one side only {one_sided:,}")
+
     print(f"\n{'level':>6}  " + "  ".join(f"{name.split(' vs ')[0].strip():>24}"
                                           for name in groups))
     for level in range(args.depth):
         cells = []
-        for matched, compared in groups.values():
-            c = compared[level]
-            cells.append(f"{100 * matched[level] / c:23.4f}%" if c else f"{'n/a':>24}")
+        for counts in groups.values():
+            c = counts.compared[level]
+            cells.append(f"{100 * counts.matched[level] / c:23.4f}%" if c else f"{'n/a':>24}")
         print(f"{level:>6}  " + "  ".join(cells))
 
     overall = 100.0 * total_matched / total_compared if total_compared else float("nan")

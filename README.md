@@ -10,6 +10,8 @@ This repository implements a small, deterministic C++ limit-order-book engine fo
 - optional post-replay prediction summary reporting by message horizon
 - deterministic C++ and Python integration tests
 - replay benchmark tooling and a hand-maintained benchmark reproducibility note
+- a vendor cross-check that reaches exact MBP-10 agreement on two Databento
+  sessions, and a LOB-Bench run as an outside second opinion
 
 ## Repository layout
 
@@ -197,7 +199,7 @@ academic sample, mirrored in several public research repos.
 
 **Replay**: all 668,765 messages parse with 0 malformed rows.
 
-## Vendor cross-check: exact agreement on MBP-10 (2026-09)
+## Vendor cross-check: exact agreement on MBP-10, two sessions (2026-09)
 
 Databento derives every schema from MBO, so their MBP-10 and a book built here
 from their MBO are two independent derivations of one source. Agreement is a
@@ -207,21 +209,56 @@ real correctness check on the book logic rather than a self-consistency check.
 `sequence` (many MBO events share a `ts_recv`, so timestamp matching compares
 the engine at a different point in the stream and manufactures disagreement).
 
-**Result: 100.0000% of 53,551,466 compared cells match** on MSFT 2024-06-03 —
-every cell, at every one of the ten levels, under both alignments.
+**Result: 100.0000% of compared cells match on both sessions** — every cell, at
+every one of the ten levels, under both alignments.
 
-| alignment | agreement | cells |
-|---|---|---|
-| vendor book rows (`A`/`C`/`F`) vs engine post-event | 100.0000% | 49,611,426 / 49,611,426 |
-| vendor `T` prints vs engine pre-fill | 100.0000% | 3,940,040 / 3,940,040 |
+| | MSFT 2024-06-03 | INTC 2024-08-02 |
+|---|---:|---:|
+| MBO records in | 4,003,834 | 2,356,988 |
+| LOBSTER messages out | 3,862,854 | 2,051,624 |
+| malformed rows | 0 | 0 |
+| **agreement** | **100.0000%** | **100.0000%** |
+| cells compared | 53,551,466 | 60,128,762 |
+| — vendor `A`/`C`/`F` vs engine post-event | 49,611,426 | 51,939,050 |
+| — vendor `T` prints vs engine pre-fill | 3,940,040 | 8,189,712 |
+| slots where both agree the level is absent | 734 | 4,638 |
+| **slots where one side sees a level and the other does not** | **0** | **0** |
 
-Nothing is excluded to reach that number. Across 53,552,200 cell slots there are
-**zero** where one side reports a price level and the other calls it absent, and
-734 where both agree the level is absent.
+Nothing is excluded to reach either number. The last row is the one that keeps
+the percentage honest: a figure computed over mutually-present cells could hide
+a disagreement about whether a level exists at all, so every slot is accounted
+for explicitly and the validator prints that reconciliation.
 
-Getting here took three fixes, two in the engine's input and one in the harness
-that measures it. The sequence is the point: each wrong answer was disproved by
-a test rather than argued away.
+### The second session is a different kind of book
+
+A second MSFT day would mostly re-test the same regime. INTC on 2024-08-02 — the
+session after Intel's Q2 report, where the repricing arrived as an overnight gap
+— is large-tick and queue-dominated where MSFT is small-tick and
+spread-dominated, measured on the engine's own L1 output over RTH:
+
+| | MSFT 2024-06-03 | INTC 2024-08-02 |
+|---|---:|---:|
+| RTH mid, open → close | 415.63 → 413.64 | 21.95 → 21.48 |
+| one tick, in bp of mid | 0.24 bp | 4.73 bp |
+| median spread | $0.05 (1.21 bp) | $0.01 (4.73 bp) |
+| share of session at a one-tick spread | 1.0% | 81.1% |
+| median touch size, bid / ask | 68 / 63 | 2,415 / 3,000 |
+| displayed fills | 70,510 | 152,683 |
+
+INTC carries **2.2x the displayed fills on 53% of the message count** and a touch
+roughly 35-48x deeper. Whatever the engine gets right, it is not getting right by
+being tuned to one book shape.
+
+The two fixes in the engine's input (below) were found on MSFT and applied
+unchanged to INTC, which reached 100.0000% on the first run with no further
+work. That is the useful part: they were corrections to a misread of the vendor's
+event model, not adjustments fitted to one session. On INTC the mirror-cancel
+dedup matches **152,683 of 152,683** fills, the same 100% the `order_id` key
+gives on MSFT.
+
+Getting to the first of those numbers took three fixes, two in the engine's input
+and one in the harness that measures it. The sequence is the point: each wrong
+answer was disproved by a test rather than argued away.
 
 **1. Execution double-count (98.23% → 99.74%).** **Databento emits three MBO
 records for one displayed execution**: a `T` print, an `F` fill against the
@@ -273,61 +310,143 @@ Also ruled out: general cancel semantics (1,925,732 cancels, zero over-cancels)
 and price truncation (zero sub-penny prices, so the fixed-point conversion is
 lossless).
 
+Reproduce either session end to end (`--confirm` is what actually spends):
+
 ```bash
+python scripts/fetch_databento_session.py --symbol INTC --date 2024-08-02 --confirm
+python scripts/databento_to_lobster.py data/databento/INTC_2024-08-02_mbo.dbn.zst \
+    --out data/databento/INTC_2024-08-02_message.csv \
+    --sequence-out data/databento/INTC_2024-08-02_seq.csv
+build/lob_engine data/databento/INTC_2024-08-02_message.csv \
+    --backend map --depth 10 --book-out data/databento/INTC_2024-08-02_book10.csv
 python scripts/validate_mbp10_vs_vendor.py \
-    --engine-book /tmp/engine_book.csv \
-    --vendor data/databento/MSFT_2024-06-03_mbp10.dbn.zst \
-    --sequences /tmp/msft_seq.csv \
-    --messages data/databento/MSFT_2024-06-03_message.csv
+    --engine-book data/databento/INTC_2024-08-02_book10.csv \
+    --vendor data/databento/INTC_2024-08-02_mbp10.dbn.zst \
+    --sequences data/databento/INTC_2024-08-02_seq.csv \
+    --messages data/databento/INTC_2024-08-02_message.csv
 ```
+
+## Second opinion: LOB-Bench (2026-09)
+
+The cell diff above is this repo marking its own homework — our alignment, our
+comparison, our tolerance. [LOB-Bench](https://github.com/peernagy/lob_bench)
+(Nagy et al., ICML 2025) is the standard evaluation suite for LOB generative
+models, and running the engine's output through it substitutes someone else's
+metric implementations for ours.
+
+`scripts/run_lob_bench.py` maps the engine's reconstructed book to LOB-Bench's
+"generated" side and Databento's own MBP-10 to its "real" side, cuts the session
+into 100 windows of 4,096 messages spread across RTH, and reports L1 and
+Wasserstein-1 distances between the two distributions.
+
+**Every statistic scores 0.000000 on both sessions**, on both metrics:
+
+| statistic | MSFT 2024-06-03 | INTC 2024-08-02 |
+|---|---:|---:|
+| spread | 0.000000 | 0.000000 |
+| orderbook imbalance | 0.000000 | 0.000000 |
+| ask / bid volume at touch | 0.000000 | 0.000000 |
+| ask / bid volume over 10 levels | 0.000000 | 0.000000 |
+| limit order depth, ask / bid | 0.000000 | 0.000000 |
+| cancellation depth, ask / bid | 0.000000 | 0.000000 |
+| log inter-arrival time | 0.000000 | 0.000000 |
+| log time to cancel | 0.000000 | 0.000000 |
+
+**What this does and does not establish.** Both sides consume the same message
+stream, so where cell agreement is already exact these zeros are exact *by
+construction*. This is not independent evidence that the engine produces
+realistic markets — it cannot be, and reading it that way would be the mistake
+the table exists to avoid. What it does establish is two things the cell diff
+does not:
+
+1. **The engine's LOBSTER export is well-formed enough for the standard academic
+   toolchain to consume unmodified**, through a third-party parser rather than
+   ours — including the message-derived statistics (inter-arrival, time to
+   cancel) that the MBP-10 diff never touches.
+2. **It is a regression check with real teeth.** Any non-zero entry would mean
+   the books differ somewhere the cell diff did not look, or that the export is
+   malformed. Building it caught exactly that class of bug in the harness: the
+   vendor's dollar prices scale to values like `215899.99999999997`, and
+   truncating rather than rounding on the integer cast manufactured a one-tick
+   disagreement on nearly every price cell (`spread` L1 0.172, cancellation
+   depth 0.119) while leaving every size-derived statistic at zero. The diff
+   tolerates that with `atol=0.5`; an integer export has to round.
+
+```bash
+python scripts/run_lob_bench.py \
+    --engine-book data/databento/INTC_2024-08-02_book10.csv \
+    --vendor data/databento/INTC_2024-08-02_mbp10.dbn.zst \
+    --sequences data/databento/INTC_2024-08-02_seq.csv \
+    --messages data/databento/INTC_2024-08-02_message.csv \
+    --symbol INTC --date 2024-08-02 \
+    --lob-bench <clone of peernagy/lob_bench> --work-dir /tmp/lobbench_intc \
+    --out report/lob_bench_INTC_2024-08-02.csv
+```
+
+`--out` writes the full score table; like the other generated CSVs under
+`report/` it is a local artefact and not committed, so the tables above are the
+checked-in record.
 
 ## Multi-level integrated OFI (2026-09)
 
 Cont, Cucuringu and Zhang ([QF 2023](https://arxiv.org/abs/2112.13213)) show that
 combining order flow imbalance across the top book levels into one integrated
 variable explains contemporaneous price impact far better than best-level OFI.
-`scripts/multi_level_ofi.py` reproduces that on Databento MBP-10 for one session
-(1,338,802 events). Vendor depth is used rather than this engine's
-reconstruction, so the result is a statement about the market rather than about
-the book-building code.
+`scripts/multi_level_ofi.py` reproduces that on Databento MBP-10 for both
+sessions (MSFT 1,338,802 events; INTC 1,503,326). Vendor depth is used rather
+than this engine's reconstruction, so the result is a statement about the market
+rather than about the book-building code.
 
 **Contemporaneous R²** (price change regressed on trailing OFI over the same window):
 
-| horizon (events) | best level (L1) | naive sum | PCA integrated |
-|---|---|---|---|
-| 10 | 0.1121 | 0.2206 | **0.2231** |
-| 50 | 0.2852 | 0.4398 | **0.4430** |
-| 100 | 0.3519 | 0.5171 | **0.5195** |
-| 500 | 0.4130 | 0.5999 | **0.5997** |
+| horizon (events) | MSFT L1 | MSFT naive sum | MSFT PCA | INTC L1 | INTC naive sum | INTC PCA |
+|---|---:|---:|---:|---:|---:|---:|
+| 10 | 0.1121 | 0.2206 | **0.2231** | 0.0163 | 0.1018 | **0.1029** |
+| 50 | 0.2852 | 0.4398 | **0.4430** | 0.1078 | 0.2645 | **0.2658** |
+| 100 | 0.3519 | 0.5171 | **0.5195** | 0.2031 | 0.3849 | **0.3866** |
+| 500 | 0.4130 | 0.5999 | **0.5997** | 0.3423 | 0.4694 | **0.4711** |
 
 **Predictive R²** (next window's price change):
 
-| horizon (events) | best level (L1) | naive sum | PCA integrated |
-|---|---|---|---|
-| 10 | **0.0168** | 0.0141 | 0.0145 |
-| 50 | **0.0262** | 0.0234 | 0.0239 |
-| 100 | **0.0124** | 0.0113 | 0.0115 |
-| 500 | 0.0012 | 0.0038 | 0.0038 |
+| horizon (events) | MSFT L1 | MSFT naive sum | MSFT PCA | INTC L1 | INTC naive sum | INTC PCA |
+|---|---:|---:|---:|---:|---:|---:|
+| 10 | **0.0168** | 0.0141 | 0.0145 | **0.0013** | 0.0002 | 0.0003 |
+| 50 | **0.0262** | 0.0234 | 0.0239 | **0.0152** | 0.0013 | 0.0013 |
+| 100 | **0.0124** | 0.0113 | 0.0115 | **0.0189** | 0.0042 | 0.0042 |
+| 500 | 0.0012 | 0.0038 | 0.0038 | **0.0077** | 0.0035 | 0.0035 |
 
-Three readings, including one that cuts against the method:
+Four readings, including one that cuts against the method:
 
-1. **Using the whole book roughly doubles contemporaneous explanatory power.**
-   At a 10-event horizon, R² goes from 0.11 to 0.22; at 500 events, 0.41 to 0.60.
-   The CCZ result reproduces cleanly.
-2. **The PCA integration is barely distinguishable from a naive sum**
-   (0.2231 vs 0.2206; 0.5997 vs 0.5999). The fitted weights run from +0.18 at
-   level 1 to +0.37 at level 10 — close enough to uniform that the first
-   principal component is nearly a plain sum. On this session the gain comes
-   from *using multiple levels at all*, not from how they are combined. That is
-   worth stating rather than presenting PCA as the source of the improvement.
-3. **Predictive power stays negligible, and L1 is marginally the best of the
-   three.** Multi-level integration helps explain impact; it does not help
-   forecast it.
+1. **Using the whole book raises contemporaneous explanatory power on both
+   sessions.** On MSFT R² roughly doubles (0.11 to 0.22 at 10 events). The CCZ
+   result reproduces cleanly.
+2. **The gain is far larger in the large-tick book, and that is the payoff of
+   the second session.** On INTC, best-level OFI explains almost nothing at
+   short horizons (0.0163 at 10 events, against MSFT's 0.1121) while the
+   integrated variable recovers 0.1029 — a **6.3x** lift where MSFT sees 2.0x.
+   The fitted level-1 PCA weight drops to +0.10 on INTC from +0.18 on MSFT.
+   This is what the microstructure of a large-tick name predicts and one
+   session could not have shown: with the spread pinned at one tick 81% of the
+   time and 2,400-3,000 shares queued at the touch, best-quote *transitions*
+   are rare and carry little information, so almost everything informative is
+   happening in the queue behind the touch.
+3. **The PCA integration is barely distinguishable from a naive sum** on either
+   session (MSFT 0.2231 vs 0.2206; INTC 0.1029 vs 0.1018). The fitted weights
+   are close enough to uniform that the first principal component is nearly a
+   plain sum. The gain comes from *using multiple levels at all*, not from how
+   they are combined — worth stating rather than presenting PCA as the source
+   of the improvement.
+4. **Predictive power stays negligible on both, and L1 is the best of the three
+   on both.** Multi-level integration helps explain impact; it does not help
+   forecast it. Note the sign flip against reading 2: the deep book is where the
+   contemporaneous explanatory power lives and the touch is where what little
+   predictive power exists lives, and INTC separates the two more sharply than
+   MSFT (0.0189 for L1 against 0.0042 integrated, at 100 events).
 
-That third point is the same pattern this repository's L1 study found, and the
-same one the propagator calibration in the impact repository found on the same
-underlying feed: order flow explains contemporaneous returns strongly and
-predicts them barely at all. Three independent measurements, one conclusion.
+That last point is the same pattern this repository's L1 study found, and the
+same one the propagator calibration in the impact repository found on both
+sessions: order flow explains contemporaneous returns strongly and predicts them
+barely at all. Independent measurements, one conclusion.
 
 ```bash
 python scripts/multi_level_ofi.py --vendor <mbp10.dbn.zst>
@@ -339,7 +458,14 @@ Aggregate throughput is the wrong headline for an order book engine: it hides
 the tail, and comparable public engines quote latency percentiles. Both figures
 below are reported because they answer different questions, and quoting only one
 would mislead. MSFT 2024-06-03, 3,862,854 messages, `map` backend, 8 trials with
-2 discarded as warmup (`scripts/latency_profile.py`):
+2 discarded as warmup (`scripts/latency_profile.py`).
+
+Unlike the correctness sections above, this one is deliberately **not** extended
+to the second session. These are host-specific timings, and the INTC run would
+have to be measured on the machine this table was recorded on to be comparable;
+putting a number taken on different hardware in the same table would corrupt the
+comparison rather than broaden it. Correctness generalises across sessions,
+latency does not generalise across hosts.
 
 | | p50 | p99 | max | implied throughput |
 |---|---|---|---|---|
