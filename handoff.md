@@ -108,6 +108,15 @@ mattered:
    ADMISSION, not a fix, and is documented as such; the queue-size row of the
    comparison table stays wrong on purpose.
 
+**LOB-Bench battery** (`--lob-bench <clone>`): simulated as "generated" vs real,
+both written at K=3 levels. INTC scores 0.09-0.70 across the battery where the
+Brief-5 reconstruction scored 0.000000, which calibrates those zeros as real
+rather than the metric being blind. Best row is limit-order depth (0.094 on
+INTC); worst is inter-arrival (0.62-0.64 both sessions) -- the burstiness
+failure found independently by someone else's code. MSFT's two 0.000 rows at the
+touch are vacuous, not skill: Q1 is empty in both books. `time_to_cancel` is
+excluded on purpose (needs order identity; a queue-size process has none).
+
 **Traps already hit and fixed (do not re-introduce):**
 - theta estimated as "p_ref moved on the SAME book row as a depletion" gives
   0.05 on INTC against a true 0.51. The book takes several messages to settle.

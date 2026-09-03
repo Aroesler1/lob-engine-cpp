@@ -473,10 +473,7 @@ Two of the three stylized facts reproduce, and the third does not:
 
 Simulating the fitted model for a full session and comparing against the real
 one. Distances are Wasserstein-1 and total variation between the two
-distributions — the pair LOB-Bench reports — computed directly rather than
-through its file loader, because LOB-Bench consumes ten-level LOBSTER books and
-this model produces three levels a side by construction; padding seven levels of
-fabricated emptiness and scoring it would not mean anything.
+distributions.
 
 | statistic | real | simulated | W₁ | TV |
 |---|---:|---:|---:|---:|
@@ -490,6 +487,52 @@ fabricated emptiness and scoring it would not mean anything.
 
 The spread distribution comes out well (W₁ = 0.12 tick). Everything else is off
 in an informative direction.
+
+#### Scored again with LOB-Bench
+
+The same suite the reconstruction was scored against
+[above](#second-opinion-lob-bench-2026-09), now with the *simulated* book as the
+"generated" side and the real one as "real". Both sides are written at K = 3
+levels rather than padding the model's output out to ten with fabricated
+emptiness — LOB-Bench's own `cut_data_to_lvl` does the same to real data, so
+this is its intended shape.
+
+| statistic | INTC L1 | INTC W₁ | MSFT L1 | MSFT W₁ |
+|---|---:|---:|---:|---:|
+| spread | 0.271 | 0.201 | 0.300 | 0.527 |
+| orderbook imbalance | 0.499 | — | 0.135 | — |
+| ask volume at touch | 0.388 | 0.856 | 0.000 | 0.252 |
+| bid volume at touch | 0.465 | 0.936 | 0.000 | 0.299 |
+| ask volume over 3 levels | 0.699 | 1.420 | 0.610 | 0.192 |
+| bid volume over 3 levels | 0.672 | 1.169 | 0.612 | 0.267 |
+| limit ask order depth | **0.094** | 0.200 | 0.723 | 0.554 |
+| limit bid order depth | 0.228 | 0.115 | 0.619 | 0.223 |
+| log inter-arrival time | 0.635 | 0.973 | 0.618 | 0.917 |
+
+Three things worth reading off this table:
+
+1. **It calibrates the zeros in the section above.** The same battery scored the
+   engine's reconstruction against the vendor's book at **0.000000 on every
+   statistic**. Here a genuinely approximate model scores 0.09 to 0.70 on the
+   same scale. The earlier zeros were not the metric failing to notice.
+2. **Order placement is the part the model gets right.** Limit-order depth on
+   INTC scores 0.094 — the queue-reactive mechanism really does capture where
+   traders post relative to the mid. Inter-arrival is the worst row on both
+   sessions (0.62-0.64), which is the burstiness failure again, arrived at
+   independently by someone else's code.
+3. **MSFT's two zeros are a trap, not a success.** Ask and bid volume at the
+   touch score 0.000 because Q₁ is empty in both the real book and the simulated
+   one — the model matches by being vacuously right about a queue that is
+   essentially never there. That is the ±3-window problem from the top of this
+   section showing up as a suspiciously good number, and it is exactly why the
+   θ = 7.34 diagnostic matters more than any single distance.
+
+`time_to_cancel` is in LOB-Bench's default battery and is deliberately not
+scored: it needs order identity to link an add to its cancellation, and a
+queue-size process has none. Emitting synthetic order ids would produce a number
+rather than a measurement. `orderbook_imbalance` has no Wasserstein entry
+because the simulated book can have both sides of a level empty, making the
+imbalance 0/0.
 
 ### Where it fails, and why
 
@@ -563,6 +606,8 @@ the useful part of reporting them separately:
 python scripts/queue_reactive.py --session INTC_2024-08-02
 python scripts/queue_reactive.py --session MSFT_2024-06-03
 python scripts/queue_reactive.py --session INTC_2024-08-02 --model-i --no-cap   # the divergence
+python scripts/queue_reactive.py --session INTC_2024-08-02 \
+    --lob-bench <clone of peernagy/lob_bench>                                   # external battery
 ```
 
 ## Multi-level integrated OFI (2026-09)

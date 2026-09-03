@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from queue_reactive import (  # noqa: E402
     HALF_TICK,
+    normalise,
     K,
     RTH_OPEN,
     TICK,
@@ -348,3 +349,55 @@ def test_level_from_best_is_recorded_alongside_the_pref_index(synthetic):
     # in the synthetic book Q_1 is always the touch, so the two agree there
     touch = events[events.queue == 1]
     assert (touch.level_from_best == 1).all()
+
+
+def test_event_record_carries_side_and_per_queue_inter_arrival(synthetic):
+    """The per-event record is a stated deliverable, so its fields are pinned."""
+    records, _, _ = synthetic
+    events = records.events
+    for column in ("event_type", "side", "queue", "level_from_best",
+                   "q_before", "dt_queue"):
+        assert column in events.columns, f"missing {column}"
+
+    # side must agree with the sign of the p_ref-relative queue index
+    assert (events[events.queue > 0].side == "ask").all()
+    assert (events[events.queue < 0].side == "bid").all()
+
+    # dt_queue is the gap since the previous event on the SAME queue, so it is
+    # at least as large as the gap since the previous event anywhere
+    for queue, group in events.groupby("queue"):
+        stamps = group.time.to_numpy()
+        expected = np.diff(stamps)
+        assert np.allclose(group.dt_queue.to_numpy()[1:], expected, atol=1e-9), queue
+        assert np.isnan(group.dt_queue.to_numpy()[0]), "first event has no predecessor"
+
+
+def test_rate_estimator_matches_the_papers_waiting_time_form(synthetic):
+    """N / T must agree with the paper's own estimator, [mean waiting time]^-1.
+
+    Huang, Lehalle and Rosenbaum define the total event intensity at a queue as
+    the reciprocal of the mean waiting time between events there, conditional on
+    queue size. This module instead uses events over exposure, which is the
+    standard MLE for a Markov jump process and is what makes the Poisson
+    confidence bands exact. The two are the same estimator written differently,
+    and this checks that on data where both are computable -- if they diverged,
+    one of the two accountings would be wrong.
+    """
+    records, aes, frame = synthetic
+    events = records.events.dropna(subset=["dt_queue"])
+    binned = events.assign(
+        n=[int(normalise(q, aes[qu])) for q, qu in zip(events.q_before, events.queue)])
+
+    compared = 0
+    for (queue, n), group in binned.groupby(["queue", "n"]):
+        if len(group) < 400:
+            continue
+        row = frame[(frame.queue == queue) & (frame.n == n)]
+        if row.empty:
+            continue
+        paper = 1.0 / group.dt_queue.mean()
+        mine = float(row.lambda_total.iloc[0])
+        assert abs(paper - mine) / mine < 0.10, (
+            f"Q{queue} n={n}: waiting-time form {paper:.3f} vs N/T {mine:.3f}")
+        compared += 1
+    assert compared >= 8, f"only {compared} bins had enough events to compare"

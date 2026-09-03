@@ -267,6 +267,9 @@ def build_records(book_path: Path, message_path: Path, *, chunk: int = 250_000,
 
     prev_sizes: dict[int, float] | None = None
     prev_time: float | None = None
+    # last event time on each queue, carried across chunks so the per-queue
+    # inter-arrival is continuous rather than restarting at every chunk edge
+    last_event: dict[int, float] = {}
 
     if verbose:
         print("  pass 2/2: queues and events", file=sys.stderr)
@@ -363,14 +366,34 @@ def build_records(book_path: Path, message_path: Path, *, chunk: int = 250_000,
                 best_ref = np.where(idx > 0, best_ask[rows_at], best_bid[rows_at])
                 level = np.abs(price[keep] - best_ref) // TICK + 1
 
+                times = acting["time"].to_numpy()[keep]
+                # per-queue inter-arrival: the waiting time the queue-reactive
+                # estimator is defined on is the gap since the previous event at
+                # the SAME queue, not since the previous event anywhere
+                dt_queue = np.full(len(times), np.nan)
+                for q in np.unique(idx):
+                    at = np.flatnonzero(idx == q)
+                    stamps = times[at]
+                    previous = last_event.get(int(q))
+                    gaps = np.diff(stamps, prepend=previous if previous is not None else np.nan)
+                    dt_queue[at] = gaps
+                    last_event[int(q)] = float(stamps[-1])
+
                 frame = pd.DataFrame({
-                    "time": acting["time"].to_numpy()[keep],
+                    "time": times,
                     "event_type": etype[keep],
+                    "side": np.where(idx > 0, "ask", "bid"),
                     "queue": idx,
                     "level_from_best": level,
                     "size": acting["size"].to_numpy()[keep],
                     "q_before": q_before,
+                    "dt_queue": dt_queue,
+                    "p_ref": p_ref[rows_at],
                 })
+                # the whole queue vector at each event, which is what lets a
+                # window be exported as a LOBSTER book for external scoring
+                for qi in QUEUES:
+                    frame[f"q{qi}"] = sizes[qi][rows_at]
                 touch_side = np.where(idx > 0, -1, 1)
                 opposite_size = np.array([sizes[int(o)][r] for o, r in zip(touch_side, rows_at)])
                 frame["opposite_class"] = touch_classes(opposite_size, class_edges)
@@ -915,6 +938,124 @@ def plot_intensities(frame: pd.DataFrame, session: str, out_path: Path,
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------
+# external scoring with LOB-Bench
+# --------------------------------------------------------------------------
+
+def export_for_lob_bench(records: SessionRecords, path: pd.DataFrame, aes: dict[int, float],
+                         session: str, work_dir: Path, n_windows: int = 60,
+                         window: int = 3000) -> None:
+    """Write real and simulated sessions as K-level LOBSTER files.
+
+    LOB-Bench scores "real" against "generated" LOBSTER sequences. The book here
+    is only K levels a side by construction, so both sides are written at K
+    levels rather than padding the model's output out to ten with fabricated
+    emptiness -- LOB-Bench's own `cut_data_to_lvl` does the same thing to real
+    data, so this is its intended shape, not a workaround.
+
+    One statistic in the default battery is deliberately not scored:
+    `time_to_cancel` needs order identity to link an add to its cancellation,
+    and a queue-size process has none. Emitting synthetic ids would produce a
+    number rather than a measurement.
+    """
+    for folder in ("real", "gen", "cond"):
+        (work_dir / folder).mkdir(parents=True, exist_ok=True)
+
+    def write(kind: str, index: int, frame: pd.DataFrame, book: np.ndarray) -> None:
+        suffix = "_gen_id_0" if kind == "gen" else ""
+        frame.to_csv(work_dir / kind / f"{session.split('_')[0]}_{session.split('_')[1]}"
+                     f"_message_real_id_{index}{suffix}.csv",
+                     header=False, index=False, float_format="%.9f")
+        np.savetxt(work_dir / kind / f"{session.split('_')[0]}_{session.split('_')[1]}"
+                   f"_orderbook_real_id_{index}{suffix}.csv", book, fmt="%d", delimiter=",")
+
+    def book_from(qs: np.ndarray, p_ref: np.ndarray) -> np.ndarray:
+        """LOBSTER order per level: ask price, ask size, bid price, bid size."""
+        out = np.zeros((len(p_ref), 4 * K), dtype=np.int64)
+        for level in range(1, K + 1):
+            ask_sz, bid_sz = qs[:, K + level - 1], qs[:, K - level]
+            ask_px = p_ref + level * TICK - HALF_TICK
+            bid_px = p_ref - level * TICK + HALF_TICK
+            out[:, 4 * (level - 1) + 0] = np.where(ask_sz > 0, ask_px, 9_999_999_999)
+            out[:, 4 * (level - 1) + 1] = np.maximum(ask_sz, 0)
+            out[:, 4 * (level - 1) + 2] = np.where(bid_sz > 0, bid_px, -9_999_999_999)
+            out[:, 4 * (level - 1) + 3] = np.maximum(bid_sz, 0)
+        return out
+
+    # ---- real ----------------------------------------------------------
+    events = records.events.dropna(subset=["p_ref"]).reset_index(drop=True)
+    qcols = [f"q{qi}" for qi in QUEUES]
+    real_q = np.nan_to_num(events[qcols].to_numpy()).astype(np.int64)
+    real_pref = events["p_ref"].to_numpy().astype(np.int64)
+    real_book = book_from(real_q, real_pref)
+    anchor = int(real_pref[0])
+
+    # ---- simulated: p_ref is in ticks from an arbitrary origin ----------
+    sim_pref = anchor + path["p_ref"].to_numpy().astype(np.int64) * TICK
+    sim_q = np.stack([np.rint(path[f"q{qi}"].to_numpy() * aes[qi]).astype(np.int64)
+                      for qi in QUEUES], axis=1)
+    sim_book = book_from(sim_q, sim_pref)
+    sim_queue = path["queue"].to_numpy().astype(int)
+    sim_price = sim_pref + sim_queue * TICK - np.sign(sim_queue) * HALF_TICK
+    sim_size = np.array([aes[q] for q in sim_queue])
+    sim_type = np.array([(1, 2, 4, 2)[k] for k in path["kind"].to_numpy()])
+
+    starts_real = np.linspace(0, len(events) - window, n_windows).astype(int)
+    starts_sim = np.linspace(0, len(path) - window, n_windows).astype(int)
+    for index, (ra, sa) in enumerate(zip(starts_real, starts_sim)):
+        r = slice(ra, ra + window)
+        write("real", index, pd.DataFrame({
+            "time": events["time"].to_numpy()[r], "event_type": events["event_type"].to_numpy()[r],
+            "order_id": np.arange(window), "size": events["size"].to_numpy()[r],
+            "price": events["queue"].to_numpy()[r] * 0 + (
+                real_pref[r] + events["queue"].to_numpy()[r] * TICK
+                - np.sign(events["queue"].to_numpy()[r]) * HALF_TICK),
+            "direction": np.where(events["queue"].to_numpy()[r] > 0, -1, 1)}),
+            real_book[r])
+        s_ = slice(sa, sa + window)
+        write("gen", index, pd.DataFrame({
+            "time": path["time"].to_numpy()[s_] + RTH_OPEN,
+            "event_type": sim_type[s_], "order_id": np.arange(window),
+            "size": np.rint(sim_size[s_]).astype(np.int64), "price": sim_price[s_],
+            "direction": np.where(sim_queue[s_] > 0, -1, 1)}), sim_book[s_])
+        # a one-row conditioning prefix, enough for the loader, no information
+        write("cond", index, pd.DataFrame({
+            "time": events["time"].to_numpy()[ra:ra + 1],
+            "event_type": events["event_type"].to_numpy()[ra:ra + 1],
+            "order_id": [0], "size": events["size"].to_numpy()[ra:ra + 1],
+            "price": [int(real_pref[ra])], "direction": [1]}), real_book[ra:ra + 1])
+
+
+def score_with_lob_bench(work_dir: Path, lob_bench: Path) -> pd.DataFrame:
+    """Run LOB-Bench's own scoring code over the exported windows."""
+    sys.path.insert(0, str(lob_bench))
+    import data_loading as lb_loading
+    import eval as lb_eval
+    import metrics as lb_metrics
+    import scoring as lb_scoring
+
+    loader = lb_loading.Simple_Loader(str(work_dir / "real"), str(work_dir / "gen"),
+                                      str(work_dir / "cond"))
+    config = {
+        "spread": {"fn": lambda m, b: lb_eval.spread(m, b).values, "discrete": True},
+        "orderbook_imbalance": {"fn": lambda m, b: lb_eval.orderbook_imbalance(m, b).values},
+        "ask_volume_touch": {"fn": lambda m, b: lb_eval.l1_volume(m, b).ask_vol.values},
+        "bid_volume_touch": {"fn": lambda m, b: lb_eval.l1_volume(m, b).bid_vol.values},
+        "ask_volume_3": {"fn": lambda m, b: lb_eval.total_volume(m, b, K).ask_vol_3.values},
+        "bid_volume_3": {"fn": lambda m, b: lb_eval.total_volume(m, b, K).bid_vol_3.values},
+        "limit_ask_order_depth": {"fn": lambda m, b: lb_eval.limit_order_depth(m, b)[0].values},
+        "limit_bid_order_depth": {"fn": lambda m, b: lb_eval.limit_order_depth(m, b)[1].values},
+        "log_inter_arrival_time": {
+            "fn": lambda m, b: np.log(lb_eval.inter_arrival_time(m)
+                                      .replace({0: 1e-9}).values.astype(float))},
+    }
+    scores, _, _ = lb_scoring.run_benchmark(
+        loader, config, {"l1": lb_metrics.l1_by_group, "wasserstein": lb_metrics.wasserstein})
+    return pd.DataFrame([{"statistic": name, "l1": float(v["l1"][0]),
+                          "wasserstein": float(v["wasserstein"][0])}
+                         for name, v in scores.items()])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -927,6 +1068,10 @@ def main() -> int:
                          "opposite-queue coupling; diverges, and that is the point")
     ap.add_argument("--duration", type=float, default=float(RTH_CLOSE - RTH_OPEN))
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--lob-bench", type=Path, default=None,
+                    help="clone of peernagy/lob_bench; scores simulated vs real "
+                         "with its own metric code")
+    ap.add_argument("--work-dir", type=Path, default=Path("/tmp/qr_lobbench"))
     ap.add_argument("--no-cap", action="store_true",
                     help="let queues run unbounded, showing the raw divergence")
     args = ap.parse_args()
@@ -980,6 +1125,14 @@ def main() -> int:
     table.to_csv(args.out_dir / f"compare_{args.session}.csv", index=False)
     print()
     print(table.to_string(index=False, float_format=lambda v: f"{v:0.3f}"))
+
+    if args.lob_bench:
+        work = args.work_dir / args.session
+        export_for_lob_bench(records, path, aes, args.session, work)
+        battery = score_with_lob_bench(work, args.lob_bench)
+        battery.to_csv(args.out_dir / f"lob_bench_{args.session}.csv", index=False)
+        print("\nLOB-Bench battery (simulated as 'generated' vs real):")
+        print(battery.to_string(index=False, float_format=lambda v: f"{v:0.4f}"))
     return 0
 
 
