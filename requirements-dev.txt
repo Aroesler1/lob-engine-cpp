@@ -1,0 +1,17 @@
+# Python dependencies for the test suite and the analysis scripts under scripts/.
+# CI installs this file if it exists; without it the Python tests fail at import
+# with "No module named numpy" while the C++ tests pass, which reads like a
+# broken suite rather than a missing environment.
+numpy
+pandas
+pytest
+# scipy is not optional despite only appearing inside function bodies:
+# validate_mbp10_vs_vendor and queue_reactive both use scipy.stats for the exact
+# Garwood Poisson intervals, and the tests exercise those paths.
+scipy
+
+# NOT included, deliberately:
+#   databento  - imported only inside functions that read a vendor .dbn file, and
+#                no test touches one. Adding it would pull ~40MB into CI to
+#                install a package nothing under tests/ imports.
+#   matplotlib - only used by the plotting entry points, not by any test.

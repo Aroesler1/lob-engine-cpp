@@ -57,3 +57,7 @@ venv/
 
 # Databento extracts: licensed data, and MBO is ~70MB compressed per symbol-day
 data/databento/
+
+# Cross-agent working notes. Kept locally, not published: it is scratch context
+# for whoever picks the work up next, not part of the repo.
+handoff.md
