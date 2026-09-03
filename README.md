@@ -12,6 +12,8 @@ This repository implements a small, deterministic C++ limit-order-book engine fo
 - replay benchmark tooling and a hand-maintained benchmark reproducibility note
 - a vendor cross-check that reaches exact MBP-10 agreement on two Databento
   sessions, and a LOB-Bench run as an outside second opinion
+- a calibrated queue-reactive model (Huang-Lehalle-Rosenbaum) fitted on the
+  reconstructed books, with the places it breaks measured rather than asserted
 
 ## Repository layout
 
@@ -386,6 +388,182 @@ python scripts/run_lob_bench.py \
 `--out` writes the full score table; like the other generated CSVs under
 `report/` it is a local artefact and not committed, so the tables above are the
 checked-in record.
+
+## Queue-reactive calibration (2026-09)
+
+Everything above reconstructs books. This is the repository's first *fitted
+model*: the queue-reactive model of Huang, Lehalle and Rosenbaum
+([JASA 2015](https://arxiv.org/abs/1312.0563)), in which the book is a Markov
+queueing system of 2K queues sitting at fixed offsets from a reference price,
+and the intensity of limit-order arrival, cancellation and market-order flow at
+each queue is a function of that queue's own size.
+
+The geometry is the part that is easy to get wrong, and it carries the model.
+Queue `Q_i` sits `(|i| - 0.5)` ticks from `p_ref`, **not** at a fixed offset from
+the best quote. That is what lets `Q_1` be genuinely empty when the spread
+widens, and what makes "market orders reach `Q_2` only once `Q_1` has emptied" a
+statement the model can express at all. Because limit prices are whole ticks and
+the queues sit half a tick off `p_ref`, `p_ref` is always an odd multiple of half
+a tick and the whole geometry is exact in integers.
+
+### The two sessions land on opposite sides of the model's assumptions
+
+The queue-reactive model is a **large-tick** model. Having two sessions makes
+that concrete rather than a caveat:
+
+| | INTC 2024-08-02 | MSFT 2024-06-03 |
+|---|---:|---:|
+| median spread | 1 tick | 5 ticks |
+| session time with the best quote inside the ±3 window | **100.0%** | **70.8%** |
+| events landing on a modelled queue | 1,329,413 of 2,051,624 (64.8%) | 490,034 of 3,862,854 (12.7%) |
+| AES at the touch | 370 / 301 shares | 56 / 56 shares |
+| `p_ref` moves | 13,170 | 60,597 |
+| best-queue depletions | 26,044 | 8,260 |
+| **implied θ = moves / depletions** | **0.51** | **7.34** |
+
+That last row is the sharpest diagnostic in this section. In the paper's Model
+III the reference price moves *with probability θ* when a best queue empties, so
+θ is a probability and must lie in [0, 1]. On MSFT the estimator returns
+**7.34** — the price moves seven times more often than a modelled queue empties,
+because with a five-tick spread the best quote is usually outside the ±3 window
+entirely and the price moves for reasons the model cannot see. An impossible
+probability is the model failing loudly rather than quietly, and it is a cleaner
+statement of "wrong regime" than any goodness-of-fit number would be.
+
+Everything below is therefore reported on INTC, with MSFT kept as the negative
+control.
+
+### Intensities
+
+![Queue-reactive intensities, INTC](report/queue_reactive/intensities_INTC_2024-08-02.png)
+
+Rates are `N / T` — events at a queue while it held a given size, over seconds of
+exposure to that size — which is the MLE for a Markov jump process. Bands are
+exact Garwood Poisson intervals, chosen over a normal approximation because the
+interesting part of these curves is the sparse large-queue tail where a Wald
+interval would dip below zero. Sizes are in units of AES, the average event size
+at that queue, with `n = 0` reserved for a genuinely empty queue rather than
+merely a thin one: the whole price-move mechanism keys on emptiness, so lumping
+it in with "less than half an AES" would blur exactly the state that matters.
+
+Two of the three stylized facts reproduce, and the third does not:
+
+1. **Execution is concentrated at the touch, sharply.** Peak `λ^M` runs
+   **28.50 / s at Q₊₁, 1.96 at Q₊₂, 0.09 at Q₊₃** — a 15× drop to the second
+   level and over 300× to the third. Deeper queues only trade once the ones in
+   front are gone, which is the mechanism the p_ref-relative geometry exists to
+   express.
+2. **Limit arrival falls with queue size**, steeply: at Q₊₁, `λ^L` goes from
+   76.3 / s at an empty queue to ~10.6 / s once five or more AES are resting.
+   This is where the calibration departs from the paper, which reports `λ^L` at
+   Q₊₁ as *roughly constant with a significantly smaller value at zero*. Here it
+   is the reverse — much **larger** at zero — and the reason is structural: on a
+   one-tick-spread name an empty Q₊₁ means the spread has widened, so posting
+   there improves the quote and captures priority. The paper's stocks queue
+   differently.
+3. **Cancellation is not proportional to queue size, and it is not close.**
+   The natural null — every resting order cancels independently at some constant
+   hazard — predicts `λ^C ∝ n`. Measured at Q₊₁, `corr(n, λ^C) = −0.425`, and the
+   per-order cancellation rate `λ^C / n` **falls from 9.73 to 0.321 between n = 1
+   and n = 25**, a thirty-fold collapse. Cancellation is roughly flat in absolute
+   terms above n ≈ 3. A long queue is a queue traders want to stay in, and the
+   individual order's propensity to leave drops accordingly.
+
+### Simulated versus real
+
+Simulating the fitted model for a full session and comparing against the real
+one. Distances are Wasserstein-1 and total variation between the two
+distributions — the pair LOB-Bench reports — computed directly rather than
+through its file loader, because LOB-Bench consumes ten-level LOBSTER books and
+this model produces three levels a side by construction; padding seven levels of
+fabricated emptiness and scoring it would not mean anything.
+
+| statistic | real | simulated | W₁ | TV |
+|---|---:|---:|---:|---:|
+| mean inter-arrival (ms) | 20.92 | 14.84 | 1.43 | 0.59 |
+| **median inter-arrival (ms)** | **0.057** | **6.23** | | |
+| mean queue at Q₁ (AES) | 17.75 | 60.90 | 44.45 | 0.34 |
+| median queue at Q₁ (AES) | 11.0 | 19.0 | | |
+| mean spread (ticks) | 1.208 | 1.296 | 0.12 | 0.12 |
+| median spread (ticks) | 1.0 | 1.0 | | |
+| 1s mid move sd (ticks) | 0.707 | 0.379 | 0.14 | 0.07 |
+
+The spread distribution comes out well (W₁ = 0.12 tick). Everything else is off
+in an informative direction.
+
+### Where it fails, and why
+
+**1. It is not stationary as specified, and that is a measurement, not an
+opinion.** Fitting the paper's three intensities leaves the queue with positive
+net drift at every size above n ≈ 4. Q₊₁ receives **283,771 adds against 261,399
+cancels and executions** over the session — a surplus of 22,372 events, or
+**+16.1 million shares**. A closed birth-death chain cannot run that surplus, and
+the real queue plainly does not grow, so the missing outflow is real: it is queue
+content leaving by **re-indexing when `p_ref` moves**, which is not an order
+event and therefore appears in none of the three rates. Simulated with the three
+rates alone and left unbounded, Q₁ runs to **3,125 AES against a real 17.8**.
+
+Adding the price-move transition as a fitted, state-dependent intensity closes
+the generator, and the shape it takes explains the trap: `λ^move` is essentially
+a step function, **16.1 / s when the touch is empty and ~0 once anything is
+resting there**. Price moves require a touch to clear; a runaway queue never
+clears; so a runaway queue can never be drained. Q₊₁'s only outflow is a *down*
+move, which requires Q₋₁ to empty, and vice versa — a **mutual deadlock**. The
+real book escapes it through cross-queue dependence that Model I forbids by
+assumption: P(both touch queues > 25 AES) is **5.06%** against **1.88%** under
+independence, and the real one-second drift of Q₊₁ at a fixed own size swings
+from **−3.3 AES/s when the opposite touch is empty to +1.2 when it is large** — a
+sign change driven entirely by a queue the Model I rates never look at. Adding
+the paper's own Model IIb coupling (touch rates conditioned on a coarse class of
+the opposite queue) plus a reflecting cap at the largest size the real session
+reached is what produces the table above; the queue row stays wrong on purpose.
+
+**2. Order sizes are not the binding constraint here.** Worth stating because it
+is the obvious next suspect: measuring the imbalance in shares rather than events
+makes it *worse*, not better (+1.86 AES/s against +0.96), since adds at the touch
+average 384 shares versus 376 for cancels and 298 for executions. Whatever
+order-size awareness buys on this data, it does not buy stationarity.
+
+**3. Volatility clustering, as expected.** The fitted model is Poisson given the
+state, so inter-arrival times come out close to exponential. The real ones are
+not: the real **median** gap between events on a modelled queue is **57
+microseconds** against a simulated 6.2 ms — two orders of magnitude — while the
+*means* differ by less than 50%. That gap between median and mean is burstiness,
+and a state-dependent Poisson model has no machinery for it. Simulated
+one-second mid volatility comes out at 0.379 ticks against a real 0.707, roughly
+half, for the same reason: real price moves arrive in clusters that a
+memoryless model spreads out evenly.
+
+### Where this points
+
+Each failure lines up with a specific piece of the current literature, which is
+the useful part of reporting them separately:
+
+- **Queue independence** is the binding constraint, and it is exactly what the
+  Multidimensional Deep Queue-Reactive model of Bodor and Carlier
+  ([arXiv 2501.08822](https://arxiv.org/abs/2501.08822)) relaxes first, learning
+  dependencies across levels with a neural network while keeping the
+  interpretable point-process structure.
+- **Order sizes** are treated as exogenous here and modelled endogenously in
+  their earlier order-size-aware queue-reactive work
+  ([arXiv 2405.18594](https://arxiv.org/abs/2405.18594)). Measured on this
+  session that is not what fixes stationarity, but it is the right axis for
+  matching queue distributions.
+- **Burstiness** is the classic motivation for Hawkes self-excitation, where the
+  arrival intensity is lifted by recent arrivals rather than by the book state
+  alone. Wu, Rambaldi, Muzy and Bacry
+  ([arXiv 1901.08938](https://arxiv.org/abs/1901.08938)) do exactly that to
+  exactly this model — they add a Hawkes component directly to the arrival rates
+  of Huang et al.'s queue-reactive process, so past order flow and current book
+  state both enter. That is the direct extension of what is calibrated here.
+  **Not implemented**; the 57 µs versus 6.2 ms median gap above is the
+  measurement that would justify it.
+
+```bash
+python scripts/queue_reactive.py --session INTC_2024-08-02
+python scripts/queue_reactive.py --session MSFT_2024-06-03
+python scripts/queue_reactive.py --session INTC_2024-08-02 --model-i --no-cap   # the divergence
+```
 
 ## Multi-level integrated OFI (2026-09)
 

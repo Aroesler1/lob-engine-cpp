@@ -2,8 +2,14 @@
 
 ## Current goal (complete as of 2026-09-03)
 
-Put the repo's correctness claim on **two** Databento sessions instead of one,
-and validate a second time with an external yardstick (LOB-Bench).
+Two tranches of work, both complete and both on branch
+`second-session-validation` (PR #15, still OPEN -- this work is stacked on it,
+not on `main`, because the queue-reactive work reuses the LOB-Bench tooling that
+only exists on that branch):
+
+1. Put the correctness claim on **two** Databento sessions and add LOB-Bench.
+2. Calibrate the **queue-reactive model** (Huang-Lehalle-Rosenbaum, JASA 2015)
+   -- the repo's first fitted model.
 
 ## Verified state
 
@@ -69,7 +75,54 @@ This mattered downstream: see the sibling impact repo's handoff.
   an INTC number taken on different hardware would corrupt the comparison rather
   than broaden it. Stated as such in the README.
 
+## Queue-reactive calibration (tranche 2)
+
+`scripts/queue_reactive.py --session {INTC_2024-08-02,MSFT_2024-06-03}`.
+Runs end to end in ~70s on INTC, ~2min on MSFT. 22 tests in
+`tests/test_queue_reactive.py`, including a synthetic Poisson book with
+closed-form known intensities.
+
+**Headline: the two sessions land on opposite sides of the model's assumptions.**
+INTC has the best quote inside the +/-3 queue window 100.0% of the time; MSFT
+70.8%, with only 12.7% of its messages landing on a modelled queue at all. The
+sharpest diagnostic is the implied theta = p_ref moves / best-queue depletions:
+0.51 on INTC, **7.34 on MSFT** -- an impossible probability, because with a
+5-tick spread the price moves for reasons the model cannot see.
+
+**The model is not stationary as specified, and this is measured.** Fitting the
+paper's three intensities leaves Q+1 with 283,771 adds against 261,399
+cancels+executions (+16.1M shares). That surplus is queue content leaving by
+RE-INDEXING when p_ref moves -- not an order event, so it appears in none of the
+three rates. Simulated unbounded with Model I, Q1 runs to 3,125 AES against a
+real 17.8.
+
+Three things were needed to get a usable simulation, in order of how much they
+mattered:
+1. A fitted state-dependent price-move intensity replacing the paper's scalar
+   theta. It turns out to be a step function: 16.1/s at an empty touch, ~0
+   otherwise.
+2. Model IIb coupling (touch rates conditioned on a coarse class of the opposite
+   queue). Queue independence is the binding constraint: real 1s drift of Q+1 at
+   fixed own size swings -3.3 -> +1.2 AES/s with the opposite touch.
+3. A reflecting cap at the largest size the real session reached. This is an
+   ADMISSION, not a fix, and is documented as such; the queue-size row of the
+   comparison table stays wrong on purpose.
+
+**Traps already hit and fixed (do not re-introduce):**
+- theta estimated as "p_ref moved on the SAME book row as a depletion" gives
+  0.05 on INTC against a true 0.51. The book takes several messages to settle.
+- `round(q/AES)` lumps a genuinely empty queue in with a thin one. `normalise()`
+  reserves n=0 for empty, because the whole price-move mechanism keys on it.
+- `_side_sizes` must only call a deep queue "unknown" when the ladder is FULL at
+  10 levels; otherwise the book already reported everything it had.
+- Order sizes were checked as a suspect and are NOT the issue: the imbalance is
+  worse in shares (+1.86 AES/s) than in events (+0.96).
+
 ## Next action
 
-Nothing outstanding. If extending: re-measure latency for both sessions on one
-pinned host to make that table two-session too.
+Nothing outstanding. Both tranches are pushed. If extending:
+- re-measure latency for both sessions on one pinned host to make that table
+  two-session too;
+- the Hawkes extension (Wu, Rambaldi, Muzy & Bacry, arXiv 1901.08938) is the
+  documented next step for the burstiness failure -- real median inter-arrival
+  57 microseconds against a simulated 6.2 ms.

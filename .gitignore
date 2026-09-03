@@ -46,6 +46,12 @@ venv/
 /report/*.log
 /report/*.out
 /report/*.txt
+# same for generated artefacts in report/ subdirectories; committed plots
+# (report/**/*.png) are the exception, since the README embeds them
+/report/**/*.csv
+/report/**/*.json
+/report/**/*.log
+/report/**/*.txt
 /report/generated/
 /reports/
 
