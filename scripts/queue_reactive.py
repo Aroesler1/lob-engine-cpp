@@ -215,8 +215,9 @@ def touch_classes(size: np.ndarray, edges: tuple[float, ...]) -> np.ndarray:
     return np.digitize(np.nan_to_num(size, nan=0.0), edges)
 
 
-def build_records(book_path: Path, message_path: Path, *, chunk: int = 250_000,
-                  verbose: bool = True) -> SessionRecords:
+def build_records(book_path: Path | None, message_path: Path, *, chunk: int = 250_000,
+                  verbose: bool = True, depth: int = 10,
+                  book: dict[str, np.ndarray] | None = None) -> SessionRecords:
     """Walk book and message files in lockstep and aggregate per-queue statistics.
 
     The engine's --book-out writes the book AFTER each message, so the state a
@@ -234,8 +235,17 @@ def build_records(book_path: Path, message_path: Path, *, chunk: int = 250_000,
     # in one pass avoids having to stitch the sequential tie-break across chunks.
     if verbose:
         print("  pass 1/2: reference price", file=sys.stderr)
-    touch = pd.read_csv(book_path, usecols=["timestamp", "bid_px_0", "ask_px_0",
-                                            "bid_sz_0", "ask_sz_0"])
+    if book is not None:
+        # in-memory book cache. Round-tripping it through a temporary CSV just
+        # to reuse the reader costs minutes per session on the wider names and
+        # buys nothing.
+        touch = pd.DataFrame({c: book[c] for c in ("timestamp", "bid_px_0",
+                                                   "ask_px_0", "bid_sz_0", "ask_sz_0")})
+        touch = touch.replace(0, np.nan)
+        touch["timestamp"] = book["timestamp"]
+    else:
+        touch = pd.read_csv(book_path, usecols=["timestamp", "bid_px_0", "ask_px_0",
+                                                "bid_sz_0", "ask_sz_0"])
     p_ref_all = reference_prices(touch["bid_px_0"].to_numpy(), touch["ask_px_0"].to_numpy())
     times_all = touch["timestamp"].to_numpy()
     spread_ticks = ((touch["ask_px_0"].to_numpy() - touch["bid_px_0"].to_numpy()) / TICK)
@@ -262,8 +272,11 @@ def build_records(book_path: Path, message_path: Path, *, chunk: int = 250_000,
     uncovered = off_grid = depletions = 0
     inside_time = total_time = 0.0
 
-    px_cols = [f"{tag}_px_{lvl}" for tag in ("bid", "ask") for lvl in range(10)]
-    sz_cols = [f"{tag}_sz_{lvl}" for tag in ("bid", "ask") for lvl in range(10)]
+    # the book file may carry fewer than ten levels. K = 3 queues sit at most
+    # three ticks from p_ref, so three levels a side is provably sufficient; see
+    # the note in scripts/sessions.py.
+    px_cols = [f"{tag}_px_{lvl}" for tag in ("bid", "ask") for lvl in range(depth)]
+    sz_cols = [f"{tag}_sz_{lvl}" for tag in ("bid", "ask") for lvl in range(depth)]
 
     prev_sizes: dict[int, float] | None = None
     prev_time: float | None = None
@@ -273,8 +286,29 @@ def build_records(book_path: Path, message_path: Path, *, chunk: int = 250_000,
 
     if verbose:
         print("  pass 2/2: queues and events", file=sys.stderr)
-    reader = pd.read_csv(book_path, usecols=["timestamp"] + px_cols + sz_cols,
-                         chunksize=chunk)
+    if book is not None:
+        book_columns = ["timestamp"] + px_cols + sz_cols
+        n_book_rows = len(book["timestamp"])
+
+        # bound as defaults, not captured by closure: the loop below reuses the
+        # names `total` and `key` for its own accumulators, and a generator that
+        # reads them lazily would pick up whatever they held by the time the
+        # second chunk was pulled
+        def _chunks(book=book, columns=book_columns, total=n_book_rows, chunk=chunk):
+            for start in range(0, total, chunk):
+                stop = min(start + chunk, total)
+                frame = pd.DataFrame(
+                    {c: book[c][start:stop] for c in columns}, copy=False)
+                # 0 is the cache's "absent" sentinel; the reader below expects
+                # NaN, which is what the CSV form carried
+                for column in columns[1:]:
+                    frame[column] = frame[column].astype(np.float64).replace(0.0, np.nan)
+                yield frame
+
+        reader = _chunks()
+    else:
+        reader = pd.read_csv(book_path, usecols=["timestamp"] + px_cols + sz_cols,
+                             chunksize=chunk)
     processed = 0
     for block in reader:
         lo, hi = processed, processed + len(block)
@@ -282,10 +316,10 @@ def build_records(book_path: Path, message_path: Path, *, chunk: int = 250_000,
         p_ref = p_ref_all[lo:hi]
         time = block["timestamp"].to_numpy()
 
-        bid_px = block[[f"bid_px_{i}" for i in range(10)]].to_numpy()
-        ask_px = block[[f"ask_px_{i}" for i in range(10)]].to_numpy()
-        bid_sz = block[[f"bid_sz_{i}" for i in range(10)]].to_numpy()
-        ask_sz = block[[f"ask_sz_{i}" for i in range(10)]].to_numpy()
+        bid_px = block[[f"bid_px_{i}" for i in range(depth)]].to_numpy()
+        ask_px = block[[f"ask_px_{i}" for i in range(depth)]].to_numpy()
+        bid_sz = block[[f"bid_sz_{i}" for i in range(depth)]].to_numpy()
+        ask_sz = block[[f"ask_sz_{i}" for i in range(depth)]].to_numpy()
         best_bid, best_ask = bid_px[:, 0], ask_px[:, 0]
 
         defined = p_ref > 0
