@@ -578,6 +578,39 @@ def build_records_from_cache(session: str, root: Path | None = None) -> SessionR
                          book=sessions.load_book(session, root))
 
 
+def score_both_with_lob_bench(session: str, records: SessionRecords,
+                              aes: dict[int, float], cache: Path, work_dir: Path,
+                              lob_bench: Path) -> pd.DataFrame:
+    """Run the LOB-Bench battery on the base and Hawkes simulators.
+
+    Both are scored against the SAME real session with the same window count and
+    the same exporter, so the two columns differ only in which simulator wrote
+    the generated side. Paths come from the cached parquet the fit already
+    wrote, so this does not refit anything.
+    """
+    from queue_reactive import export_for_lob_bench, score_with_lob_bench
+
+    frames = {}
+    for model in ("base", "hawkes"):
+        path_file = cache / f"path_{model}_{session}.parquet"
+        if not path_file.exists():
+            raise SystemExit(f"no cached {model} path for {session}; run the fit first")
+        target = work_dir / session / model
+        export_for_lob_bench(records, pd.read_parquet(path_file), aes, session, target)
+        frames[model] = score_with_lob_bench(target, lob_bench).set_index("statistic")
+
+    out = pd.DataFrame({
+        "statistic": frames["base"].index,
+        "base_l1": frames["base"]["l1"].to_numpy(),
+        "hawkes_l1": frames["hawkes"]["l1"].reindex(frames["base"].index).to_numpy(),
+        "base_wasserstein": frames["base"]["wasserstein"].to_numpy(),
+        "hawkes_wasserstein": frames["hawkes"]["wasserstein"].reindex(
+            frames["base"].index).to_numpy(),
+    })
+    out.insert(0, "session", session)
+    return out
+
+
 def plot(out_dir: Path, sessions_done: list[str]) -> None:
     """Left: what the Hawkes term fixed. Right: the kernel it fitted."""
     import matplotlib
@@ -654,12 +687,39 @@ def main() -> int:
     ap.add_argument("--window-seconds", type=float, default=10.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--no-standard-errors", action="store_true")
+    ap.add_argument("--lob-bench", type=Path, default=None,
+                    help="clone of peernagy/lob_bench; scores the base and Hawkes "
+                         "simulators with its own metric code")
+    ap.add_argument("--lob-bench-work", type=Path, default=Path("/tmp/hawkes_lobbench"))
+    ap.add_argument("--score-only", action="store_true",
+                    help="reuse the cached simulated paths instead of refitting; "
+                         "only useful together with --lob-bench")
     args = ap.parse_args()
 
     from queue_reactive import compare
 
     wanted = tuple(args.session) if args.session else sessions.SESSIONS
     args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    cache = args.work_dir or sessions.work_dir()
+
+    if args.score_only:
+        if not args.lob_bench:
+            raise SystemExit("--score-only is only meaningful with --lob-bench")
+        battery = []
+        for session in wanted:
+            print(session, flush=True)
+            records = build_records_from_cache(session, args.work_dir)
+            aes = average_event_sizes(records.events)
+            table = score_both_with_lob_bench(session, records, aes, cache,
+                                              args.lob_bench_work, args.lob_bench)
+            table.to_csv(args.out_dir / f"lob_bench_{session}.csv", index=False)
+            battery.append(table)
+            print(table.to_string(index=False, float_format=lambda v: f"{v:0.4f}"),
+                  flush=True)
+        pd.concat(battery).to_csv(args.out_dir / "lob_bench.csv", index=False)
+        print(f"saved -> {args.out_dir}")
+        return 0
 
     summaries = []
     for session in wanted:
@@ -675,7 +735,6 @@ def main() -> int:
         base_table.to_csv(args.out_dir / f"compare_base_{session}.csv", index=False)
         # paths are large and reproducible, so they go to the gitignored work
         # directory for the Turing test to pick up rather than into report/
-        cache = args.work_dir or sessions.work_dir()
         path.to_parquet(cache / f"path_hawkes_{session}.parquet", index=False)
         base_path.to_parquet(cache / f"path_base_{session}.parquet", index=False)
         print(f"  tied timestamps {fitted.tie_share * 100:.1f}%")

@@ -236,7 +236,7 @@ the engine at a different point in the stream and manufactures disagreement).
 **Result: 100.0000% of compared cells match on both sessions** - every cell, at
 every one of the ten levels, under both alignments.
 
-| | MSFT 2024-06-03 | INTC 2024-08-02 |
+| quantity | MSFT 2024-06-03 | INTC 2024-08-02 |
 |---|---:|---:|
 | MBO records in | 4,003,834 | 2,356,988 |
 | LOBSTER messages out | 3,862,854 | 2,051,624 |
@@ -260,7 +260,7 @@ session after Intel's Q2 report, where the repricing arrived as an overnight gap
  -  is large-tick and queue-dominated where MSFT is small-tick and
 spread-dominated, measured on the engine's own L1 output over RTH:
 
-| | MSFT 2024-06-03 | INTC 2024-08-02 |
+| quantity | MSFT 2024-06-03 | INTC 2024-08-02 |
 |---|---:|---:|
 | RTH mid, open → close | 415.63 → 413.64 | 21.95 → 21.48 |
 | one tick, in bp of mid | 0.24 bp | 4.73 bp |
@@ -868,26 +868,78 @@ at the floor).
 
 ![Hawkes](report/hawkes/hawkes.png)
 
-| session | tied stamps | spectral radius | decay range (us) | real median gap (ms) | base gap | Hawkes gap | base Q1 | Hawkes Q1 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| MSFT 2024-02-01 | 5.9% | 0.626 | 73 to 597 | 0.324 | 52x | 27.89x | 5.3x | 7.5x |
-| MSFT 2024-04-01 | 6.0% | 0.636 | 48 to 727 | 0.389 | 49x | 30.04x | 4.0x | 4.5x |
-| MSFT 2024-06-03 | 9.7% | 0.644 | 37 to 942 | 0.532 | 34x | 16.12x | 13.4x | 31.2x |
-| MSFT 2024-10-01 | 6.4% | 0.622 | 58 to 1,636 | 0.283 | 65x | 31.90x | 10.4x | 20.5x |
-| MSFT 2024-12-02 | 12.4% | 0.693 | 25 to 11,350 | 0.375 | 158x | 38.21x | 9.0x | 21.1x |
-| INTC 2024-02-01 | 14.7% | 0.744 | 19 to 585 | 0.217 | 71x | **0.80x** | 8.3x | 7.4x |
-| INTC 2024-04-01 | 16.4% | 0.765 | 17 to 454 | 0.075 | 206x | **1.74x** | 10.8x | 28.9x |
-| INTC 2024-08-02 | 14.4% | 0.781 | 9 to 501 | 0.057 | 110x | **0.99x** | 3.4x | 3.9x |
-| INTC 2024-10-01 | 14.3% | 0.747 | 1 to 850 | 0.175 | 82x | **0.59x** | 12.3x | 9.8x |
-| INTC 2024-12-02 | 15.2% | 0.791 | 13 to 411 | 0.046 | 144x | **1.85x** | 13.4x | 20.2x |
-| AAPL 2024-02-01 | 7.9% | 0.685 | 32 to 308 | 0.193 | 56x | **1.66x** | 1.2x | 2.1x |
-| AAPL 2024-04-01 | 14.0% | 0.758 | 19 to 590 | 0.124 | 90x | **0.84x** | 1.5x | 3.9x |
-| AAPL 2024-06-03 | 10.6% | 0.730 | 28 to 477 | 0.061 | 182x | 2.93x | 1.1x | 8.5x |
-| AAPL 2024-08-01 | 8.0% | 0.684 | 31 to 309 | 0.106 | 91x | 7.37x | 1.6x | 3.9x |
-| AAPL 2024-10-01 | 6.3% | 0.695 | 32 to 422 | 0.073 | 74x | 5.65x | 1.2x | 2.0x |
+| session | tied stamps | spectral radius | decay range (us) | real median gap (ms) | base gap | Hawkes gap | base Q1 | Hawkes Q1 | LOB-Bench timing, base | LOB-Bench timing, Hawkes | LOB-Bench stats improved |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| MSFT 2024-02-01 | 5.9% | 0.626 | 73 to 597 | 0.324 | 52x | 27.89x | 5.3x | 7.5x | 0.646 | **0.403** | 5 of 9 |
+| MSFT 2024-04-01 | 6.0% | 0.636 | 48 to 727 | 0.389 | 49x | 30.04x | 4.0x | 4.5x | 0.643 | **0.432** | 7 of 9 |
+| MSFT 2024-06-03 | 9.7% | 0.644 | 37 to 942 | 0.532 | 34x | 16.12x | 13.4x | 31.2x | 0.618 | **0.408** | 5 of 9 |
+| MSFT 2024-10-01 | 6.4% | 0.622 | 58 to 1,636 | 0.283 | 65x | 31.90x | 10.4x | 20.5x | 0.651 | **0.442** | 5 of 9 |
+| MSFT 2024-12-02 | 12.4% | 0.693 | 25 to 11,350 | 0.375 | 158x | 38.21x | 9.0x | 21.1x | 0.700 | **0.391** | 4 of 9 |
+| INTC 2024-02-01 | 14.7% | 0.744 | 19 to 585 | 0.217 | 71x | **0.80x** | 8.3x | 7.4x | 0.681 | **0.235** | 7 of 9 |
+| INTC 2024-04-01 | 16.4% | 0.765 | 17 to 454 | 0.075 | 206x | **1.74x** | 10.8x | 28.9x | 0.712 | **0.266** | 4 of 9 |
+| INTC 2024-08-02 | 14.4% | 0.781 | 9 to 501 | 0.057 | 110x | **0.99x** | 3.4x | 3.9x | 0.635 | **0.267** | 6 of 9 |
+| INTC 2024-10-01 | 14.3% | 0.747 | 1 to 850 | 0.175 | 82x | **0.59x** | 12.3x | 9.8x | 0.719 | **0.279** | 8 of 9 |
+| INTC 2024-12-02 | 15.2% | 0.791 | 13 to 411 | 0.046 | 144x | **1.85x** | 13.4x | 20.2x | 0.706 | **0.284** | 7 of 9 |
+| AAPL 2024-02-01 | 7.9% | 0.685 | 32 to 308 | 0.193 | 56x | **1.66x** | 1.2x | 2.1x | 0.666 | **0.231** | 5 of 9 |
+| AAPL 2024-04-01 | 14.0% | 0.758 | 19 to 590 | 0.124 | 90x | **0.84x** | 1.5x | 3.9x | 0.672 | **0.233** | 3 of 9 |
+| AAPL 2024-06-03 | 10.6% | 0.730 | 28 to 477 | 0.061 | 182x | 2.93x | 1.1x | 8.5x | 0.737 | **0.267** | 2 of 9 |
+| AAPL 2024-08-01 | 8.0% | 0.684 | 31 to 309 | 0.106 | 91x | 7.37x | 1.6x | 3.9x | 0.686 | **0.300** | 2 of 9 |
+| AAPL 2024-10-01 | 6.3% | 0.695 | 32 to 422 | 0.073 | 74x | 5.65x | 1.2x | 2.0x | 0.701 | **0.300** | 3 of 9 |
 
 "Gap" columns are the simulated median inter-arrival divided by the real one, so
 1.00x is a match. "Q1" columns are the same ratio for the mean touch queue size.
+The LOB-Bench columns are the L1 distance on `log_inter_arrival_time`, where
+lower is closer to real, and the count is how many of the battery's nine
+statistics the Hawkes simulator scores better on than the base one.
+
+### The same trade, scored by LOB-Bench
+
+Both simulators put through the LOB-Bench battery against the same real session,
+with the same exporter and the same sixty windows, so the only difference is
+which one wrote the generated side. Mean L1 across the fifteen sessions:
+
+| statistic | base | Hawkes | change | Hawkes better on |
+|---|---:|---:|---:|---:|
+| log inter-arrival time | 0.678 | **0.316** | **-0.362** | **15 of 15** |
+| limit bid order depth | 0.318 | 0.188 | -0.130 | 7 of 15 |
+| orderbook imbalance | 0.306 | 0.212 | -0.093 | 12 of 15 |
+| limit ask order depth | 0.359 | 0.346 | -0.013 | 8 of 15 |
+| bid volume over 3 levels | 0.568 | 0.578 | +0.011 | 8 of 15 |
+| bid volume at touch | 0.462 | 0.482 | +0.020 | 6 of 15 |
+| spread | 0.306 | 0.343 | +0.037 | 5 of 15 |
+| ask volume at touch | 0.446 | 0.497 | +0.050 | 4 of 15 |
+| ask volume over 3 levels | 0.573 | 0.654 | +0.081 | 8 of 15 |
+
+**One statistic moves decisively and it is the one the term was added for.**
+Timing improves on **all fifteen sessions**, by far the largest change in the
+table, and the Wasserstein-1 version agrees: 0.999 to 0.546, also 15 of 15. No
+other statistic improves on more than 12.
+
+**The volume statistics move the other way**, which is the queue-size divergence
+arriving through someone else's code. Ask volume over three levels is the worst
+at +0.081, and spread degrades slightly too. Nothing here contradicts the
+internal comparison; it confirms it with metrics this repo did not write.
+
+**Order placement improves and order size does not.** The two depth statistics
+and the imbalance all move down, so the Hawkes term does put limit orders in
+more realistic places relative to the mid. It is the amount resting at those
+places that gets worse. That split is invisible in the median inter-arrival and
+the mean queue size, and it is the clearest thing the external battery adds.
+
+**MSFT improves on timing here even though its median gap did not.** Its
+LOB-Bench timing L1 falls from 0.618-0.700 to 0.391-0.442 on all five sessions,
+while the median inter-arrival ratio stayed at 16-38x. The L1 distance is taken
+over the whole log-gap distribution, so it registers a distribution that got
+closer in shape without its median converging. Two views of the same fit
+disagreeing in an informative direction is the reason to run both.
+
+No session improves on all nine statistics and none improves on fewer than two:
+the range is 2 of 9 (AAPL 2024-06-03 and 2024-08-01) to 8 of 9
+(INTC 2024-10-01).
+
+```bash
+python scripts/hawkes.py --score-only --lob-bench <clone of peernagy/lob_bench>
+```
 
 **What it fixed.** The base model's median inter-arrival is **34 to 206 times too
 long on every one of the fifteen sessions**. With the Hawkes term it lands within
@@ -1105,7 +1157,7 @@ putting a number taken on different hardware in the same table would corrupt the
 comparison rather than broaden it. Correctness generalises across sessions,
 latency does not generalise across hosts.
 
-| | p50 | p99 | max | implied throughput |
+| measurement | p50 | p99 | max | implied throughput |
 |---|---|---|---|---|
 | replay only (book apply) | 127 ns/msg | 127 ns/msg | 127 ns/msg | 7.90M msgs/sec |
 | end to end (parse + replay + startup) | 1,085 ns/msg | 1,090 ns/msg | 1,090 ns/msg | 922k msgs/sec |
