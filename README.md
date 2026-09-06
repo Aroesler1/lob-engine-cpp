@@ -14,6 +14,28 @@ This repository implements a small, deterministic C++ limit-order-book engine fo
   sessions, and a LOB-Bench run as an outside second opinion
 - a calibrated queue-reactive model (Huang-Lehalle-Rosenbaum) fitted on the
   reconstructed books, with the places it breaks measured rather than asserted
+- four studies the exact book makes possible: a price for queue position, a
+  price for latency, a Hawkes fix for the simulator's timing, and a classifier
+  that tries to tell the simulator from the market
+
+## The sample, stated once
+
+**Fifteen symbol-days on three names, all in 2024: MSFT, INTC and AAPL.** Every
+session is an ordinary trading day. There are no stress days, no halts and no
+index events, and the sample was not drawn at random from anything.
+
+`INTC 2024-08-02` is the one exception: a single-name event day, the session
+after Intel's Q2 report and dividend suspension. It is kept because it is
+genuinely different, and it is flagged wherever it behaves differently.
+
+**Nothing below is a population or a regime claim.** A sentence here may say
+what was measured on Microsoft, Intel or Apple on these days. It may not say
+what is true of large-tick names, of small-tick names, or of Nasdaq stocks,
+because three names on ordinary days cannot support that and no amount of
+careful phrasing makes them. Where a statement holds on some sessions and not
+others, the count is given.
+
+Session list, record counts and cost are in [DATA.md](DATA.md).
 
 ## Repository layout
 
@@ -211,18 +233,18 @@ real correctness check on the book logic rather than a self-consistency check.
 `sequence` (many MBO events share a `ts_recv`, so timestamp matching compares
 the engine at a different point in the stream and manufactures disagreement).
 
-**Result: 100.0000% of compared cells match on both sessions** — every cell, at
+**Result: 100.0000% of compared cells match on both sessions** - every cell, at
 every one of the ten levels, under both alignments.
 
-| | MSFT 2024-06-03 | INTC 2024-08-02 |
+| quantity | MSFT 2024-06-03 | INTC 2024-08-02 |
 |---|---:|---:|
 | MBO records in | 4,003,834 | 2,356,988 |
 | LOBSTER messages out | 3,862,854 | 2,051,624 |
 | malformed rows | 0 | 0 |
 | **agreement** | **100.0000%** | **100.0000%** |
 | cells compared | 53,551,466 | 60,128,762 |
-| — vendor `A`/`C`/`F` vs engine post-event | 49,611,426 | 51,939,050 |
-| — vendor `T` prints vs engine pre-fill | 3,940,040 | 8,189,712 |
+| - vendor `A`/`C`/`F` vs engine post-event | 49,611,426 | 51,939,050 |
+| - vendor `T` prints vs engine pre-fill | 3,940,040 | 8,189,712 |
 | slots where both agree the level is absent | 734 | 4,638 |
 | **slots where one side sees a level and the other does not** | **0** | **0** |
 
@@ -233,12 +255,12 @@ for explicitly and the validator prints that reconciliation.
 
 ### The second session is a different kind of book
 
-A second MSFT day would mostly re-test the same regime. INTC on 2024-08-02 — the
+A second MSFT day would mostly re-test the same book. INTC on 2024-08-02 - the
 session after Intel's Q2 report, where the repricing arrived as an overnight gap
-— is large-tick and queue-dominated where MSFT is small-tick and
+ -  is large-tick and queue-dominated where MSFT is small-tick and
 spread-dominated, measured on the engine's own L1 output over RTH:
 
-| | MSFT 2024-06-03 | INTC 2024-08-02 |
+| quantity | MSFT 2024-06-03 | INTC 2024-08-02 |
 |---|---:|---:|
 | RTH mid, open → close | 415.63 → 413.64 | 21.95 → 21.48 |
 | one tick, in bp of mid | 0.24 bp | 4.73 bp |
@@ -266,7 +288,7 @@ answer was disproved by a test rather than argued away.
 records for one displayed execution**: a `T` print, an `F` fill against the
 resting order, and a `C` removing that same quantity from the book. Applying
 both reduced the resting order twice, which is why engine depth ran
-systematically below the vendor's — smaller in 87,583 of 98,102 mismatches. That
+systematically below the vendor's - smaller in 87,583 of 98,102 mismatches. That
 is the same duplication as the `T`/`F` pair one layer deeper, and it is
 invisible without a vendor-derived book to diff against.
 
@@ -278,7 +300,7 @@ pre-trade state made agreement *worse*, 99.74% → 99.17%.
 
 The vendor's MBP-10 contains essentially no `F` rows (3 in the entire session).
 It represents a displayed execution as a `T` print followed by a `C` removal,
-and those two rows carry **different book states** — `T` the book before the
+and those two rows carry **different book states** - `T` the book before the
 execution, `C` the book after. Trade sequences split 60,292 emitting only `(T,)`
 against 38,209 emitting `(T, C)`, so keeping the last vendor row per sequence
 compared against a post-trade snapshot on some sequences and a pre-trade
@@ -289,7 +311,7 @@ in **3,001 of 3,001**.
 
 **3. The dedup was keyed on the wrong field (99.9938% → 100.0000%).** The mirror
 cancel was matched on `(sequence, price, size)`, which catches 70,254 of 70,510
-fills — 99.64%, close enough to look finished. Each of the **256 misses** left a
+fills - 99.64%, close enough to look finished. Each of the **256 misses** left a
 cancel in the stream that double-decremented a resting order, and the book then
 carried that error until the order left. A handful of events produced 3,321
 mismatched cells across 1,886 sequences, 1,585 of which were single-record
@@ -297,13 +319,13 @@ sequences merely downstream of the damage.
 
 Keying on `(sequence, order_id)` matches **70,510 of 70,510**, because the fill
 names the resting order it executed against and the mirror cancel removes
-quantity from that same order — so the pair necessarily agrees on the id, while
+quantity from that same order - so the pair necessarily agrees on the id, while
 price and size are only a proxy for it.
 
 What made this findable was measuring distance rather than inspecting cases:
 mismatched sequences sat a median **15,055 sequences after the nearest dedup
 miss**, against **4,683,657** for sequences that agreed. Two competing
-explanations were tested and rejected first — modify records (there are none in
+explanations were tested and rejected first - modify records (there are none in
 this session) and multi-record sequence ordering, which turned out to be
 *under*-represented among the mismatches at 0.3×, and that is what redirected
 the search toward downstream drift.
@@ -330,7 +352,7 @@ python scripts/validate_mbp10_vs_vendor.py \
 
 ## Second opinion: LOB-Bench (2026-09)
 
-The cell diff above is this repo marking its own homework — our alignment, our
+The cell diff above is this repo marking its own homework - our alignment, our
 comparison, our tolerance. [LOB-Bench](https://github.com/peernagy/lob_bench)
 (Nagy et al., ICML 2025) is the standard evaluation suite for LOB generative
 models, and running the engine's output through it substitutes someone else's
@@ -357,13 +379,13 @@ Wasserstein-1 distances between the two distributions.
 **What this does and does not establish.** Both sides consume the same message
 stream, so where cell agreement is already exact these zeros are exact *by
 construction*. This is not independent evidence that the engine produces
-realistic markets — it cannot be, and reading it that way would be the mistake
+realistic markets - it cannot be, and reading it that way would be the mistake
 the table exists to avoid. What it does establish is two things the cell diff
 does not:
 
 1. **The engine's LOBSTER export is well-formed enough for the standard academic
    toolchain to consume unmodified**, through a third-party parser rather than
-   ours — including the message-derived statistics (inter-arrival, time to
+   ours - including the message-derived statistics (inter-arrival, time to
    cancel) that the MBP-10 diff never touches.
 2. **It is a regression check with real teeth.** Any non-zero entry would mean
    the books differ somewhere the cell diff did not look, or that the export is
@@ -406,39 +428,63 @@ statement the model can express at all. Because limit prices are whole ticks and
 the queues sit half a tick off `p_ref`, `p_ref` is always an odd multiple of half
 a tick and the whole geometry is exact in integers.
 
-### The two sessions land on opposite sides of the model's assumptions
+### Where the model's assumptions hold, across fifteen sessions
 
-The queue-reactive model is a **large-tick** model. Having two sessions makes
-that concrete rather than a caveat:
+The queue-reactive model is built around a book whose spread is usually one
+tick: Huang, Lehalle and Rosenbaum calibrate it on stocks where that holds, and
+its K = 3 queues sit within three ticks of the reference price by construction.
+Fifteen sessions make the consequence measurable rather than a caveat.
 
-| | INTC 2024-08-02 | MSFT 2024-06-03 |
-|---|---:|---:|
-| median spread | 1 tick | 5 ticks |
-| session time with the best quote inside the ±3 window | **100.0%** | **70.8%** |
-| events landing on a modelled queue | 1,329,413 of 2,051,624 (64.8%) | 490,034 of 3,862,854 (12.7%) |
-| AES at the touch | 370 / 301 shares | 56 / 56 shares |
-| `p_ref` moves | 13,170 | 60,597 |
-| best-queue depletions | 26,044 | 8,260 |
-| **implied θ = moves / depletions** | **0.51** | **7.34** |
+| session | median spread | best quote inside the +/-3 window | events on a modelled queue | AES at the touch (ask/bid) | `p_ref` moves | depletions | implied theta |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| MSFT 2024-02-01 | 4 ticks | 84.6% | 11.2% | 69 / 73 | 99,875 | 32,159 | **3.11** |
+| MSFT 2024-04-01 | 4 ticks | 89.4% | 13.8% | 68 / 73 | 74,502 | 28,360 | **2.63** |
+| MSFT 2024-06-03 | 5 ticks | 70.8% | 12.7% | 56 / 56 | 60,597 | 8,260 | **7.34** |
+| MSFT 2024-10-01 | 5 ticks | 64.2% | 11.4% | 37 / 36 | 110,537 | 15,073 | **7.33** |
+| MSFT 2024-12-02 | 6 ticks | 55.7% | 6.6% | 61 / 49 | 38,955 | 5,637 | **6.91** |
+| INTC 2024-02-01 | 1 tick | 100.0% | 71.0% | 223 / 235 | 6,790 | 12,099 | 0.56 |
+| INTC 2024-04-01 | 1 tick | 100.0% | 71.0% | 143 / 147 | 4,880 | 9,688 | 0.50 |
+| INTC 2024-08-02 | 1 tick | 100.0% | 64.8% | 370 / 301 | 13,170 | 26,044 | 0.51 |
+| INTC 2024-10-01 | 1 tick | 100.0% | 71.4% | 411 / 416 | 4,300 | 7,215 | 0.60 |
+| INTC 2024-12-02 | 1 tick | 100.0% | 62.6% | 386 / 373 | 6,990 | 12,090 | 0.58 |
+| AAPL 2024-02-01 | 1 tick | 99.8% | 37.4% | 78 / 79 | 47,652 | 66,805 | 0.71 |
+| AAPL 2024-04-01 | 1 tick | 100.0% | 50.3% | 103 / 103 | 14,865 | 22,686 | 0.66 |
+| AAPL 2024-06-03 | 1 tick | 100.0% | 41.1% | 79 / 81 | 36,938 | 68,966 | 0.54 |
+| AAPL 2024-08-01 | 2 ticks | 99.7% | 30.0% | 63 / 64 | 67,885 | 88,833 | 0.76 |
+| AAPL 2024-10-01 | 2 ticks | 100.0% | 32.3% | 44 / 45 | 91,653 | 190,127 | 0.48 |
 
-That last row is the sharpest diagnostic in this section. In the paper's Model
-III the reference price moves *with probability θ* when a best queue empties, so
-θ is a probability and must lie in [0, 1]. On MSFT the estimator returns
-**7.34** — the price moves seven times more often than a modelled queue empties,
-because with a five-tick spread the best quote is usually outside the ±3 window
-entirely and the price moves for reasons the model cannot see. An impossible
-probability is the model failing loudly rather than quietly, and it is a cleaner
-statement of "wrong regime" than any goodness-of-fit number would be.
+| stock | median spread | inside the window | implied theta | theta is a valid probability on |
+|---|---|---|---|---:|
+| MSFT | 4 to 6 ticks | 55.7 to 89.4% | 2.63 to 7.34 | **0 of 5** |
+| INTC | 1 tick | 100.0% | 0.50 to 0.60 | 5 of 5 |
+| AAPL | 1 to 2 ticks | 99.7 to 100.0% | 0.48 to 0.76 | 5 of 5 |
 
-Everything below is therefore reported on INTC, with MSFT kept as the negative
-control.
+**Theta is the sharpest diagnostic, and it splits the sample cleanly.** In the
+paper's Model III the reference price moves *with probability theta* when a best
+queue empties, so theta is a probability and must lie in [0, 1]. It does on all
+ten sessions whose median spread is one or two ticks, and on none of the five
+where it is four to six: on MSFT the price moves two to seven times more often
+than a modelled queue empties, because the best quote spends 10 to 44% of the
+session outside the +/-3 window entirely and moves for reasons the model cannot
+see. An impossible probability is the model failing loudly rather than quietly,
+and it says more than any goodness-of-fit number would.
+
+Two things worth noting before this is read as a fact about tick size. AAPL
+trades near $200 and INTC near $21, an order of magnitude apart, and they land
+on the same side; what they share is a spread of one to two ticks, not a price.
+And the split here is between three names on fifteen days, which is a
+description of these sessions and not a rule about stocks.
+
+Everything below is reported on INTC 2024-08-02, with MSFT 2024-06-03 kept as
+the negative control, because those are the two sessions the earlier version of
+this section was written on.
 
 ### Intensities
 
 ![Queue-reactive intensities, INTC](report/queue_reactive/intensities_INTC_2024-08-02.png)
 
-Rates are `N / T` — events at a queue while it held a given size, over seconds of
-exposure to that size — which is the MLE for a Markov jump process. Bands are
+Rates are `N / T` - events at a queue while it held a given size, over seconds of
+exposure to that size - which is the MLE for a Markov jump process. Bands are
 exact Garwood Poisson intervals, chosen over a normal approximation because the
 interesting part of these curves is the sparse large-queue tail where a Wald
 interval would dip below zero. Sizes are in units of AES, the average event size
@@ -449,7 +495,7 @@ it in with "less than half an AES" would blur exactly the state that matters.
 Two of the three stylized facts reproduce, and the third does not:
 
 1. **Execution is concentrated at the touch, sharply.** Peak `λ^M` runs
-   **28.50 / s at Q₊₁, 1.96 at Q₊₂, 0.09 at Q₊₃** — a 15× drop to the second
+   **28.50 / s at Q₊₁, 1.96 at Q₊₂, 0.09 at Q₊₃** - a 15× drop to the second
    level and over 300× to the third. Deeper queues only trade once the ones in
    front are gone, which is the mechanism the p_ref-relative geometry exists to
    express.
@@ -457,13 +503,13 @@ Two of the three stylized facts reproduce, and the third does not:
    76.3 / s at an empty queue to ~10.6 / s once five or more AES are resting.
    This is where the calibration departs from the paper, which reports `λ^L` at
    Q₊₁ as *roughly constant with a significantly smaller value at zero*. Here it
-   is the reverse — much **larger** at zero — and the reason is structural: on a
+   is the reverse - much **larger** at zero - and the reason is structural: on a
    one-tick-spread name an empty Q₊₁ means the spread has widened, so posting
    there improves the quote and captures priority. The paper's stocks queue
    differently.
 3. **Cancellation is not proportional to queue size, and it is not close.**
-   The natural null — every resting order cancels independently at some constant
-   hazard — predicts `λ^C ∝ n`. Measured at Q₊₁, `corr(n, λ^C) = −0.425`, and the
+   The natural null - every resting order cancels independently at some constant
+   hazard - predicts `λ^C ∝ n`. Measured at Q₊₁, `corr(n, λ^C) = −0.425`, and the
    per-order cancellation rate `λ^C / n` **falls from 9.73 to 0.321 between n = 1
    and n = 25**, a thirty-fold collapse. Cancellation is roughly flat in absolute
    terms above n ≈ 3. A long queue is a queue traders want to stay in, and the
@@ -475,6 +521,8 @@ Simulating the fitted model for a full session and comparing against the real
 one. Distances are Wasserstein-1 and total variation between the two
 distributions.
 
+On INTC 2024-08-02:
+
 | statistic | real | simulated | W₁ | TV |
 |---|---:|---:|---:|---:|
 | mean inter-arrival (ms) | 20.92 | 14.84 | 1.43 | 0.59 |
@@ -485,8 +533,20 @@ distributions.
 | median spread (ticks) | 1.0 | 1.0 | | |
 | 1s mid move sd (ticks) | 0.707 | 0.379 | 0.14 | 0.07 |
 
-The spread distribution comes out well (W₁ = 0.12 tick). Everything else is off
-in an informative direction.
+Across all fifteen sessions, as ratios of simulated to real, so 1.00x is a match:
+
+| stock | median inter-arrival | mean queue at Q₁ | mean spread | 1s mid move sd |
+|---|---|---|---|---|
+| MSFT | 34 to 158x | 4.0 to 13.4x | 0.58 to 0.79x | 0.46 to 0.58x |
+| INTC | 71 to 206x | 3.4 to 13.4x | 0.89 to 1.20x | 0.11 to 0.70x |
+| AAPL | 56 to 182x | 1.1 to 1.6x | 0.86 to 0.95x | 0.47 to 0.57x |
+
+**The spread is the one thing the model gets close on**, within 20% on 10 of 15
+sessions and within a factor of two on all fifteen. Every other row is off in an
+informative direction, and in the same direction on every session: too few
+events, too much queue, too little volatility. The queue-size error is smallest
+on AAPL (1.1 to 1.6x) and largest on MSFT and INTC, which is worth noting given
+that AAPL is the name whose theta is closest to the middle of its valid range.
 
 #### Scored again with LOB-Bench
 
@@ -494,13 +554,13 @@ The same suite the reconstruction was scored against
 [above](#second-opinion-lob-bench-2026-09), now with the *simulated* book as the
 "generated" side and the real one as "real". Both sides are written at K = 3
 levels rather than padding the model's output out to ten with fabricated
-emptiness — LOB-Bench's own `cut_data_to_lvl` does the same to real data, so
+emptiness - LOB-Bench's own `cut_data_to_lvl` does the same to real data, so
 this is its intended shape.
 
 | statistic | INTC L1 | INTC W₁ | MSFT L1 | MSFT W₁ |
 |---|---:|---:|---:|---:|
 | spread | 0.271 | 0.201 | 0.300 | 0.527 |
-| orderbook imbalance | 0.499 | — | 0.135 | — |
+| orderbook imbalance | 0.499 | - | 0.135 | - |
 | ask volume at touch | 0.388 | 0.856 | 0.000 | 0.252 |
 | bid volume at touch | 0.465 | 0.936 | 0.000 | 0.299 |
 | ask volume over 3 levels | 0.699 | 1.420 | 0.610 | 0.192 |
@@ -516,13 +576,13 @@ Three things worth reading off this table:
    statistic**. Here a genuinely approximate model scores 0.09 to 0.70 on the
    same scale. The earlier zeros were not the metric failing to notice.
 2. **Order placement is the part the model gets right.** Limit-order depth on
-   INTC scores 0.094 — the queue-reactive mechanism really does capture where
+   INTC scores 0.094 - the queue-reactive mechanism really does capture where
    traders post relative to the mid. Inter-arrival is the worst row on both
    sessions (0.62-0.64), which is the burstiness failure again, arrived at
    independently by someone else's code.
 3. **MSFT's two zeros are a trap, not a success.** Ask and bid volume at the
    touch score 0.000 because Q₁ is empty in both the real book and the simulated
-   one — the model matches by being vacuously right about a queue that is
+   one - the model matches by being vacuously right about a queue that is
    essentially never there. That is the ±3-window problem from the top of this
    section showing up as a suspiciously good number, and it is exactly why the
    θ = 7.34 diagnostic matters more than any single distance.
@@ -538,8 +598,8 @@ imbalance 0/0.
 
 **1. It is not stationary as specified, and that is a measurement, not an
 opinion.** Fitting the paper's three intensities leaves the queue with positive
-net drift at every size above n ≈ 4. Q₊₁ receives **283,771 adds against 261,399
-cancels and executions** over the session — a surplus of 22,372 events, or
+net drift at every size above n ≈ 4. On INTC 2024-08-02, Q₊₁ receives **283,771
+adds against 261,399 cancels and executions** over the session - a surplus of 22,372 events, or
 **+16.1 million shares**. A closed birth-death chain cannot run that surplus, and
 the real queue plainly does not grow, so the missing outflow is real: it is queue
 content leaving by **re-indexing when `p_ref` moves**, which is not an order
@@ -551,11 +611,11 @@ the generator, and the shape it takes explains the trap: `λ^move` is essentiall
 a step function, **16.1 / s when the touch is empty and ~0 once anything is
 resting there**. Price moves require a touch to clear; a runaway queue never
 clears; so a runaway queue can never be drained. Q₊₁'s only outflow is a *down*
-move, which requires Q₋₁ to empty, and vice versa — a **mutual deadlock**. The
+move, which requires Q₋₁ to empty, and vice versa - a **mutual deadlock**. The
 real book escapes it through cross-queue dependence that Model I forbids by
 assumption: P(both touch queues > 25 AES) is **5.06%** against **1.88%** under
 independence, and the real one-second drift of Q₊₁ at a fixed own size swings
-from **−3.3 AES/s when the opposite touch is empty to +1.2 when it is large** — a
+from **−3.3 AES/s when the opposite touch is empty to +1.2 when it is large** - a
 sign change driven entirely by a queue the Model I rates never look at. Adding
 the paper's own Model IIb coupling (touch rates conditioned on a coarse class of
 the opposite queue) plus a reflecting cap at the largest size the real session
@@ -567,15 +627,20 @@ makes it *worse*, not better (+1.86 AES/s against +0.96), since adds at the touc
 average 384 shares versus 376 for cancels and 298 for executions. Whatever
 order-size awareness buys on this data, it does not buy stationarity.
 
-**3. Volatility clustering, as expected.** The fitted model is Poisson given the
-state, so inter-arrival times come out close to exponential. The real ones are
-not: the real **median** gap between events on a modelled queue is **57
-microseconds** against a simulated 6.2 ms — two orders of magnitude — while the
-*means* differ by less than 50%. That gap between median and mean is burstiness,
-and a state-dependent Poisson model has no machinery for it. Simulated
-one-second mid volatility comes out at 0.379 ticks against a real 0.707, roughly
-half, for the same reason: real price moves arrive in clusters that a
-memoryless model spreads out evenly.
+**3. Volatility clustering, as expected, and on every session.** The fitted model
+is Poisson given the state, so inter-arrival times come out close to exponential.
+The real ones are not. Across all fifteen sessions the real **median** gap
+between events on a modelled queue runs 0.046 to 0.532 ms, and the base model's
+simulated median is **34 to 206 times longer** - on INTC 2024-08-02, 57
+microseconds against 6.2 ms - while the *means* differ by far less. That gap
+between median and mean is burstiness, and a state-dependent Poisson model has no
+machinery for it. Simulated one-second mid volatility is roughly half the real
+value on every session, for the same reason: real price moves arrive in clusters
+that a memoryless model spreads out evenly.
+
+This is the failure the Hawkes term was added to fix, and
+[it fixes it on 7 of the 15 sessions](#hawkes-self-excitation-2026-09) while
+making the queue-size divergence in point 1 worse on 13 of 15.
 
 ### Where this points
 
@@ -596,11 +661,11 @@ the useful part of reporting them separately:
   arrival intensity is lifted by recent arrivals rather than by the book state
   alone. Wu, Rambaldi, Muzy and Bacry
   ([arXiv 1901.08938](https://arxiv.org/abs/1901.08938)) do exactly that to
-  exactly this model — they add a Hawkes component directly to the arrival rates
+  exactly this model - they add a Hawkes component directly to the arrival rates
   of Huang et al.'s queue-reactive process, so past order flow and current book
-  state both enter. That is the direct extension of what is calibrated here.
-  **Not implemented**; the 57 µs versus 6.2 ms median gap above is the
-  measurement that would justify it.
+  state both enter. **Now implemented**, on all fifteen sessions: see
+  [Hawkes self-excitation](#hawkes-self-excitation-2026-09) below for what it
+  fixed and what it did not.
 
 ```bash
 python scripts/queue_reactive.py --session INTC_2024-08-02
@@ -610,66 +675,468 @@ python scripts/queue_reactive.py --session INTC_2024-08-02 \
     --lob-bench <clone of peernagy/lob_bench>                                   # external battery
 ```
 
+## What the exact book buys you
+
+The four sections below exist because the reconstruction is exact. An engine
+that tracks every order from arrival to fill or cancel can answer questions a
+snapshot feed cannot: **where in the queue an order stood**, and therefore what
+a place in line is worth; **what a late order would have found** when it
+arrived, and therefore what latency costs; and, once a simulator is fitted to
+that book, **whether its output is distinguishable from the real thing**. The
+first two price a piece of market microstructure. The third fixes the
+simulator's worst failure. The fourth checks the fix with a classifier rather
+than a table of margins.
+
+Read in order they make one argument. Queue position and latency are measurable
+precisely because the reconstruction is exact: both turn on knowing how many
+shares stood in front of a specific order at a specific nanosecond, and neither
+survives a snapshot feed. The queue-reactive model then fails on timing by two
+orders of magnitude; the Hawkes term closes that on the sessions where the
+model's assumptions hold; and the classifier says the result is still trivially
+distinguishable from the market, with the tell having moved from the clock to
+the book. The exact book is what lets each of those be a measurement rather than
+an assertion: it prices a place in line, prices latency, diagnoses the
+simulator, and then refuses to let the fix off the hook.
+
+## Queue position value (2026-09)
+
+For every new limit order resting at the best bid or ask, `scripts/queue_position_value.py`
+records where it stood in line, whether it traded before it was cancelled, how
+long that took, and what the mid did afterwards. Position is shares ahead over
+total shares at that price, so 0 is the front. Adverse selection is signed so a
+loss to the resting order is positive, following the payoff structure Moallemi
+and Yuan price in ["A model for queue position valuation in a limit order
+book"](https://doi.org/10.2139/ssrn.2996221) (2017).
+
+![Queue position value](report/queue_position/queue_position.png)
+
+The one-number summary is the expected edge in ticks, `fill probability x
+(half spread at arrival - adverse selection)`, at the front against the back of
+the queue:
+
+| session | orders | fill prob | front fill | back fill | front adverse 10s | back adverse 10s | front edge | back edge | front - back |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| MSFT 2024-02-01 | 320,238 | 0.115 | 0.112 | 0.225 | 1.157 | 1.533 | +0.103 | +0.112 | -0.010 |
+| MSFT 2024-04-01 | 315,354 | 0.090 | 0.091 | 0.144 | 1.699 | 1.675 | +0.026 | +0.038 | -0.012 |
+| MSFT 2024-06-03 | 316,151 | 0.106 | 0.150 | 0.176 | 1.767 | 1.868 | +0.123 | +0.123 | -0.000 |
+| MSFT 2024-10-01 | 325,340 | 0.118 | 0.152 | 0.123 | 0.810 | 1.129 | +0.264 | +0.202 | +0.061 |
+| MSFT 2024-12-02 | 107,691 | 0.215 | 0.237 | 0.237 | 1.555 | 3.122 | +0.424 | +0.039 | **+0.386** |
+| INTC 2024-02-01 | 337,794 | 0.085 | **0.300** | 0.083 | 0.348 | 0.456 | +0.064 | +0.015 | +0.049 |
+| INTC 2024-04-01 | 291,622 | 0.099 | **0.338** | 0.078 | 0.437 | 0.442 | +0.027 | +0.014 | +0.013 |
+| INTC 2024-08-02 | 552,156 | 0.143 | **0.479** | 0.107 | 0.596 | 0.769 | -0.021 | -0.012 | -0.010 |
+| INTC 2024-10-01 | 355,105 | 0.076 | **0.374** | 0.065 | 0.508 | 0.469 | -0.002 | +0.009 | -0.011 |
+| INTC 2024-12-02 | 367,804 | 0.116 | **0.428** | 0.095 | 0.430 | 0.626 | +0.036 | +0.002 | +0.034 |
+| AAPL 2024-02-01 | 521,810 | 0.117 | 0.197 | 0.115 | 0.627 | 0.673 | +0.033 | +0.016 | +0.017 |
+| AAPL 2024-04-01 | 399,695 | 0.126 | 0.326 | 0.114 | 0.443 | 0.456 | +0.044 | +0.025 | +0.020 |
+| AAPL 2024-06-03 | 493,182 | 0.168 | 0.335 | 0.132 | 0.767 | 0.551 | -0.034 | +0.033 | -0.067 |
+| AAPL 2024-08-01 | 604,941 | 0.155 | 0.259 | 0.113 | 1.066 | 1.151 | -0.013 | +0.012 | -0.025 |
+| AAPL 2024-10-01 | 1,014,799 | 0.096 | 0.165 | 0.060 | 0.446 | 0.425 | +0.045 | +0.032 | +0.013 |
+
+Per-stock ranges for the front-minus-back edge, with the count of sessions where
+being at the front is worth more:
+
+| stock | front - back (ticks) | front is better on |
+|---|---|---:|
+| MSFT | -0.012 to +0.386 | 2 of 5 |
+| INTC | -0.012 to +0.049 | 3 of 5 |
+| AAPL | -0.067 to +0.020 | 3 of 5 |
+
+**Front of queue fills far more often, and is worth almost nothing.** The fill
+advantage is unambiguous on INTC, where the front decile fills 30 to 48% of the
+time against 6 to 11% at the back. It converts into edge on 8 of 15 sessions and
+against it on 7, and every difference except MSFT 2024-12-02 is under a twentieth
+of a tick. Queue priority buys fills; it does not buy money, because the fills it
+buys are the ones that arrive when the price is about to move.
+
+**Fill probability is not monotone in queue position.** On MSFT it is U-shaped:
+2024-06-03 runs 0.150 at the front, falls to 0.047 by the eighth decile, then
+returns to 0.176 at the back. The back-of-queue bucket is odd lots, median 10
+shares against 50 at the front, and they rest about twice as long before leaving.
+The bucket is measuring a different kind of participant, not a better place in
+line, which is why `median_life_s` and `median_own_size` are in the output table.
+
+**Adverse selection is larger than the whole front-to-back difference, on every
+session.** It runs 0.35 to 3.12 ticks against half spreads of 0.5 to 2.9, and it
+is the term that decides whether the edge is positive at all. On INTC 2024-08-02
+the event day, both ends of the queue have negative edge: the only session where
+resting at the touch loses money wherever you stand in line.
+
+```bash
+python scripts/queue_position_value.py
+```
+
+## The cost of latency (2026-09)
+
+`scripts/latency_cost_curve.py` replays a deliberately trivial quoting rule
+through the real message stream: one share resting at the best bid and one at
+the best ask, cancelled and re-quoted whenever the touch moves. Every action is
+delayed by a fixed latency `d`. The rule sees the book without delay and its
+orders arrive `d` later, so the curve isolates the cost of being late rather
+than the decay of a signal.
+
+**Two assumptions bound everything in this section.** First, the own orders are
+too small to move the book: one share against a touch holding tens to thousands
+makes the queue arithmetic close to exact, but it also means no market impact is
+charged anywhere. Second, other participants do not react to the own orders; the
+counterfactual book is the real one, replayed unchanged. A third, narrower one:
+queue position advances only on trades at that price, not on cancellations ahead
+of the order, which understates fill rates.
+
+![Latency cost curve](report/latency/latency_curve.png)
+
+Net P&L per fill, in ticks, marked to the mid ten seconds after each fill:
+
+| session | d = 0 | 10us | 100us | 1ms | 10ms | 100ms |
+|---|---:|---:|---:|---:|---:|---:|
+| MSFT 2024-02-01 | +0.031 | -0.505 | -0.564 | -0.808 | -1.331 | -1.819 |
+| MSFT 2024-04-01 | -0.219 | -0.438 | -0.800 | -1.561 | -2.273 | -3.617 |
+| MSFT 2024-06-03 | **+0.621** | +0.053 | -0.176 | -0.358 | -1.306 | -2.802 |
+| MSFT 2024-10-01 | +0.380 | +0.134 | -0.061 | -0.260 | -0.780 | -2.045 |
+| MSFT 2024-12-02 | +0.191 | -0.250 | -0.469 | -1.209 | -2.944 | **-4.529** |
+| INTC 2024-02-01 | -0.311 | -0.307 | -0.351 | -0.346 | -0.396 | -0.394 |
+| INTC 2024-04-01 | -0.207 | -0.257 | -0.389 | -0.353 | -0.378 | -0.557 |
+| INTC 2024-08-02 | -0.102 | -0.331 | -0.374 | -0.548 | -0.610 | -0.902 |
+| INTC 2024-10-01 | -0.104 | -0.228 | -0.211 | -0.356 | -0.284 | -0.378 |
+| INTC 2024-12-02 | -0.150 | -0.291 | -0.280 | -0.314 | -0.496 | -0.499 |
+| AAPL 2024-02-01 | -0.163 | -0.271 | -0.365 | -0.400 | -0.422 | -0.861 |
+| AAPL 2024-04-01 | -0.142 | -0.199 | -0.240 | -0.415 | -0.443 | -0.495 |
+| AAPL 2024-06-03 | -0.100 | -0.389 | -0.613 | -0.787 | -0.712 | -1.034 |
+| AAPL 2024-08-01 | +0.061 | -0.467 | -0.749 | -1.027 | -1.687 | -2.324 |
+| AAPL 2024-10-01 | +0.149 | -0.219 | -0.196 | -0.377 | -0.471 | -1.182 |
+
+| stock | net at d = 0 | net at 100ms | profitable at d = 0 |
+|---|---|---|---:|
+| MSFT | -0.219 to +0.621 | -4.529 to -1.819 | 4 of 5 |
+| INTC | -0.311 to -0.102 | -0.902 to -0.378 | 0 of 5 |
+| AAPL | -0.163 to +0.149 | -2.324 to -0.495 | 2 of 5 |
+
+**The rule loses money at every latency on 9 of 15 sessions, including zero.**
+Adverse selection exceeds the spread captured. That is the expected result for a
+quoting rule with no signal and no inventory control, and it is worth stating
+before reading the curve: this measures the *slope*, not a strategy.
+
+**The slope is where the sessions separate, and it separates by spread.** On
+MSFT, whose median spread runs 4 to 5 ticks, the rule starts profitable on four
+of five sessions and loses 1.8 to 4.5 ticks per fill by 100ms. On INTC, pinned at
+a one-tick spread, it starts unprofitable on all five and moves only 0.2 to 0.8
+ticks across four orders of magnitude of latency. There is more to lose where
+there is more spread to capture, and INTC's book has almost none.
+
+**Two mechanisms, and only one of them is the obvious one.** As `d` grows the
+quote arrives to a longer queue (median shares ahead on INTC 2024-04-01 goes 303
+at `d = 0` to 785 at 100us) and it increasingly arrives *marketable*, having been
+overtaken by the touch: the crossed share reaches 8 to 18% at 100ms. Crossed
+quotes trade immediately at their own limit, which is being picked off, and they
+are what turns gross capture negative. A third, favourable mechanism shows up
+too, and it is an artifact of the model worth naming: a late quote sometimes
+lands at a price the book has already left, resting alone as the new touch. That
+`alone_share` reaches 24% at 100ms on AAPL, and it flatters the late numbers.
+
+```bash
+python scripts/latency_cost_curve.py
+```
+
+## Hawkes self-excitation (2026-09)
+
+The queue-reactive model is a Markov chain, so its waiting times are exponential
+given the state and it cannot produce bursts. That is the burstiness failure the
+section above measures. Wu, Rambaldi, Muzy and Bacry
+([arXiv 1901.08938](https://arxiv.org/abs/1901.08938)) fix it by ADDING a Hawkes
+term to the arrival rates:
+
+    lambda_d(t) = mu_d(q(t)) + sum_s alpha[d, s] * sum_{t_j in s, t_j < t}
+                                             exp(-beta[s] * (t - t_j))
+
+`d` and `s` run over six dimensions: {limit, cancel, market} at the best bid and
+at the best ask. "Best" means the innermost non-empty queue, not the fixed index
+Q+1: on a five-tick book those differ almost always, and selecting on the index
+would fit forty-two parameters to a few thousand unrepresentative events.
+Calibration is maximum likelihood per session, warm-started from the queue-reactive
+fit, with `scripts/queue_reactive.py --model-i` still available for the base model.
+
+**Tied timestamps had to be handled before any of this worked.** A Hawkes
+likelihood assumes no two events share a time, and 5.9 to 16.4% of consecutive
+touch events here carry an identical `ts_recv`. At a gap of exactly zero the
+kernel is `exp(0) = 1` whatever beta is, so the optimiser drives beta to infinity,
+puts all the excitation on coincident events and runs the likelihood up without
+bound. Left unbounded it did exactly that on **7 of 15 sessions**, returning decay
+times around 1e-300 seconds. The decay is now bounded below at one microsecond,
+on the ground that a decay faster than the interval over which the feed reports
+distinct timestamps is not identifiable from this data. All fifteen converge with
+the bound, and it binds on one session (INTC 2024-10-01, whose fastest kernel sits
+at the floor).
+
+![Hawkes](report/hawkes/hawkes.png)
+
+| session | tied stamps | spectral radius | decay range (us) | real median gap (ms) | base gap | Hawkes gap | base Q1 | Hawkes Q1 | LOB-Bench timing, base | LOB-Bench timing, Hawkes | LOB-Bench stats improved |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| MSFT 2024-02-01 | 5.9% | 0.626 | 73 to 597 | 0.324 | 52x | 27.89x | 5.3x | 7.5x | 0.646 | **0.403** | 5 of 9 |
+| MSFT 2024-04-01 | 6.0% | 0.636 | 48 to 727 | 0.389 | 49x | 30.04x | 4.0x | 4.5x | 0.643 | **0.432** | 7 of 9 |
+| MSFT 2024-06-03 | 9.7% | 0.644 | 37 to 942 | 0.532 | 34x | 16.12x | 13.4x | 31.2x | 0.618 | **0.408** | 5 of 9 |
+| MSFT 2024-10-01 | 6.4% | 0.622 | 58 to 1,636 | 0.283 | 65x | 31.90x | 10.4x | 20.5x | 0.651 | **0.442** | 5 of 9 |
+| MSFT 2024-12-02 | 12.4% | 0.693 | 25 to 11,350 | 0.375 | 158x | 38.21x | 9.0x | 21.1x | 0.700 | **0.391** | 4 of 9 |
+| INTC 2024-02-01 | 14.7% | 0.744 | 19 to 585 | 0.217 | 71x | **0.80x** | 8.3x | 7.4x | 0.681 | **0.235** | 7 of 9 |
+| INTC 2024-04-01 | 16.4% | 0.765 | 17 to 454 | 0.075 | 206x | **1.74x** | 10.8x | 28.9x | 0.712 | **0.266** | 4 of 9 |
+| INTC 2024-08-02 | 14.4% | 0.781 | 9 to 501 | 0.057 | 110x | **0.99x** | 3.4x | 3.9x | 0.635 | **0.267** | 6 of 9 |
+| INTC 2024-10-01 | 14.3% | 0.747 | 1 to 850 | 0.175 | 82x | **0.59x** | 12.3x | 9.8x | 0.719 | **0.279** | 8 of 9 |
+| INTC 2024-12-02 | 15.2% | 0.791 | 13 to 411 | 0.046 | 144x | **1.85x** | 13.4x | 20.2x | 0.706 | **0.284** | 7 of 9 |
+| AAPL 2024-02-01 | 7.9% | 0.685 | 32 to 308 | 0.193 | 56x | **1.66x** | 1.2x | 2.1x | 0.666 | **0.231** | 5 of 9 |
+| AAPL 2024-04-01 | 14.0% | 0.758 | 19 to 590 | 0.124 | 90x | **0.84x** | 1.5x | 3.9x | 0.672 | **0.233** | 3 of 9 |
+| AAPL 2024-06-03 | 10.6% | 0.730 | 28 to 477 | 0.061 | 182x | 2.93x | 1.1x | 8.5x | 0.737 | **0.267** | 2 of 9 |
+| AAPL 2024-08-01 | 8.0% | 0.684 | 31 to 309 | 0.106 | 91x | 7.37x | 1.6x | 3.9x | 0.686 | **0.300** | 2 of 9 |
+| AAPL 2024-10-01 | 6.3% | 0.695 | 32 to 422 | 0.073 | 74x | 5.65x | 1.2x | 2.0x | 0.701 | **0.300** | 3 of 9 |
+
+"Gap" columns are the simulated median inter-arrival divided by the real one, so
+1.00x is a match. "Q1" columns are the same ratio for the mean touch queue size.
+The LOB-Bench columns are the L1 distance on `log_inter_arrival_time`, where
+lower is closer to real, and the count is how many of the battery's nine
+statistics the Hawkes simulator scores better on than the base one.
+
+### The same trade, scored by LOB-Bench
+
+Both simulators put through the LOB-Bench battery against the same real session,
+with the same exporter and the same sixty windows, so the only difference is
+which one wrote the generated side. Mean L1 across the fifteen sessions:
+
+| statistic | base | Hawkes | change | Hawkes better on |
+|---|---:|---:|---:|---:|
+| log inter-arrival time | 0.678 | **0.316** | **-0.362** | **15 of 15** |
+| limit bid order depth | 0.318 | 0.188 | -0.130 | 7 of 15 |
+| orderbook imbalance | 0.306 | 0.212 | -0.093 | 12 of 15 |
+| limit ask order depth | 0.359 | 0.346 | -0.013 | 8 of 15 |
+| bid volume over 3 levels | 0.568 | 0.578 | +0.011 | 8 of 15 |
+| bid volume at touch | 0.462 | 0.482 | +0.020 | 6 of 15 |
+| spread | 0.306 | 0.343 | +0.037 | 5 of 15 |
+| ask volume at touch | 0.446 | 0.497 | +0.050 | 4 of 15 |
+| ask volume over 3 levels | 0.573 | 0.654 | +0.081 | 8 of 15 |
+
+**One statistic moves decisively and it is the one the term was added for.**
+Timing improves on **all fifteen sessions**, by far the largest change in the
+table, and the Wasserstein-1 version agrees: 0.999 to 0.546, also 15 of 15. No
+other statistic improves on more than 12.
+
+**The volume statistics move the other way**, which is the queue-size divergence
+arriving through someone else's code. Ask volume over three levels is the worst
+at +0.081, and spread degrades slightly too. Nothing here contradicts the
+internal comparison; it confirms it with metrics this repo did not write.
+
+**Order placement improves and order size does not.** The two depth statistics
+and the imbalance all move down, so the Hawkes term does put limit orders in
+more realistic places relative to the mid. It is the amount resting at those
+places that gets worse. That split is invisible in the median inter-arrival and
+the mean queue size, and it is the clearest thing the external battery adds.
+
+**MSFT improves on timing here even though its median gap did not.** Its
+LOB-Bench timing L1 falls from 0.618-0.700 to 0.391-0.442 on all five sessions,
+while the median inter-arrival ratio stayed at 16-38x. The L1 distance is taken
+over the whole log-gap distribution, so it registers a distribution that got
+closer in shape without its median converging. Two views of the same fit
+disagreeing in an informative direction is the reason to run both.
+
+No session improves on all nine statistics and none improves on fewer than two:
+the range is 2 of 9 (AAPL 2024-06-03 and 2024-08-01) to 8 of 9
+(INTC 2024-10-01).
+
+```bash
+python scripts/hawkes.py --score-only --lob-bench <clone of peernagy/lob_bench>
+```
+
+**What it fixed.** The base model's median inter-arrival is **34 to 206 times too
+long on every one of the fifteen sessions**. With the Hawkes term it lands within
+a factor of two on **7 of 15**: five of five INTC sessions (0.59x to 1.85x) and
+two of five AAPL. This is the failure the term was added for, and where the
+queue-reactive assumptions hold it is essentially closed.
+
+**What it did not fix.** On MSFT the gap stays at **16 to 38 times** on all five
+sessions. That is the same boundary the theta diagnostic found: with a four to
+six tick spread the touch is outside the modelled window for 10 to 44% of the
+session, so most real order flow is never simulated at all and no amount of
+self-excitation on the modelled queues can supply it.
+
+**What it made worse.** The mean touch queue moves further from the real one on
+**13 of 15 sessions**, on AAPL from 1.1-1.6x to 2.0-8.5x. The excitation lifts
+adds, cancels and market orders together, so it raises the event rate without
+touching the birth-death imbalance that drives the queue upward; more events per
+second on a chain with positive drift reaches the cap sooner. Fixing the timing
+and worsening the state is a real trade, and it is the reason the next section
+scores the two simulators against each other rather than against a table of
+margins.
+
+**Kernel norms are stable and the process is subcritical everywhere.** The
+spectral radius of the norm matrix runs **0.622 to 0.791** across all fifteen
+sessions, with no session near 1, so the fitted process is stationary. Decay
+times run from about ten microseconds to a millisecond, which is the scale the
+burstiness failure lives at. Full kernel matrices with standard errors are in
+`report/hawkes/kernel_<session>.csv`.
+
+**The fitted kernel has structure the model was not told about.** Averaged over
+the fifteen sessions, the two largest entries are executions exciting themselves
+on the same side (0.58 at the ask, 0.61 at the bid), which is order splitting.
+The next largest are cross-side: an execution at the ask excites limit orders at
+the **bid** with norm 0.58, and an execution at the bid excites limit orders at
+the ask with 0.48. That is replenishment, and it is a dependency between the two
+touch queues, which is precisely what Model I forbids by assumption and what the
+[failure analysis above](#where-it-fails-and-why) identified as the binding
+constraint. The Hawkes term reaches it through timing rather than through state,
+which is presumably why it improves the clock and not the book.
+
+Two caveats. The fit uses 120 disjoint ten-second windows per session, about 5%
+of RTH, because the likelihood needs a sequential decay recursion that cannot be
+vectorised without overflowing; coverage is reported per session. And the Hawkes
+term is applied only at the touch, so the deeper queues keep their pure
+queue-reactive rates.
+
+```bash
+python scripts/hawkes.py --session INTC_2024-08-02
+```
+
+## Turing test: can a classifier tell the simulator from the market? (2026-09)
+
+Every comparison above scores one statistic at a time, so a simulator can look
+right on each margin and still be obviously fake in the joint distribution.
+`scripts/simulator_turing_test.py` asks the discriminative version: cut the real
+stream and each simulated stream into 200-event windows, describe every window
+with the same features (inter-arrival quantiles, event-type frequencies and
+transition counts, queue sizes at L1 and L2, spread, best-level OFI, trade
+count), and train a `HistGradientBoosting` classifier to separate them.
+
+The split is chronological, first 70% of each session to train and last 30% to
+test. Windows adjacent in time share book state, so a random split leaks a
+window's neighbours into training and inflates AUC toward 1 no matter how good
+the simulator is. On real windows relabelled against themselves the whole
+apparatus returns AUC within 0.05 of 0.5, which is what the test suite pins.
+
+![Turing test](report/turing/turing.png)
+
+| session | AUC base | AUC Hawkes | timing only, base | timing only, Hawkes | without timing, Hawkes | top family, base | top family, Hawkes |
+|---|---:|---:|---:|---:|---:|---|---|
+| MSFT 2024-02-01 | 1.000 | 1.000 | 1.000 | 1.000 | 0.999 | timing | timing |
+| MSFT 2024-04-01 | 1.000 | 1.000 | 1.000 | 1.000 | 0.998 | timing | timing |
+| MSFT 2024-06-03 | 1.000 | 1.000 | 1.000 | 0.999 | 0.991 | timing | timing |
+| MSFT 2024-10-01 | 1.000 | 1.000 | 1.000 | 1.000 | 0.999 | timing | timing |
+| MSFT 2024-12-02 | 1.000 | 1.000 | 1.000 | 0.992 | 0.997 | timing | event mix |
+| INTC 2024-02-01 | 1.000 | 0.998 | 1.000 | 0.991 | 0.996 | timing | book shape |
+| INTC 2024-04-01 | 1.000 | 0.994 | 1.000 | 0.987 | 0.990 | timing | book shape |
+| INTC 2024-08-02 | 1.000 | 0.995 | 1.000 | 0.991 | 0.991 | timing | event mix |
+| INTC 2024-10-01 | 1.000 | 0.996 | 1.000 | 0.992 | 0.994 | timing | book shape |
+| INTC 2024-12-02 | 0.997 | 1.000 | 1.000 | 0.988 | 0.999 | book shape | book shape |
+| AAPL 2024-02-01 | 1.000 | 0.999 | 1.000 | 0.978 | 0.990 | timing | timing |
+| AAPL 2024-04-01 | 1.000 | 0.997 | 1.000 | 0.980 | 0.985 | timing | event mix |
+| AAPL 2024-06-03 | 1.000 | 1.000 | 1.000 | 0.994 | 0.994 | timing | timing |
+| AAPL 2024-08-01 | 1.000 | 1.000 | 1.000 | 0.997 | 0.995 | timing | timing |
+| AAPL 2024-10-01 | 1.000 | 1.000 | 1.000 | 0.999 | 0.997 | timing | timing |
+
+**The claim under test was that AUC falls from base to Hawkes and the remaining
+separation is no longer inter-arrival timing. The first half is false and the
+second half is half true.**
+
+**AUC does not meaningfully fall, because it has nowhere to go.** The base
+simulator scores 1.000 on 14 of 15 sessions: a classifier with no access to the
+raw stream picks the fake out every time. The Hawkes simulator scores 0.994 to
+1.000. Fourteen of fifteen sessions move down, and the movement is between the
+third and fourth decimal place. Both simulators are trivially distinguishable
+from the market, and the fix that closed a 100-fold timing error did not change
+that. Reporting this as "AUC improved on 14 of 15" would be true and useless.
+
+**Because the headline AUC is saturated, the informative number is the one from
+a restricted feature set.** Refitting on the timing features alone: the base
+simulator is caught at 1.000 on every session, the Hawkes simulator at 0.978 to
+0.999. So the Hawkes term genuinely weakened the timing tell, and it is nowhere
+near removing it. Matching the median inter-arrival is not matching the
+distribution, which is exactly the gap a Turing test exists to expose and a
+table of medians cannot.
+
+**Timing is still the top discriminating family on 8 of 15 sessions after the
+fix, and it was the top family on 14 of 15 before.** Where it stops being the
+tell, it is replaced rather than eliminated: on four of five INTC sessions book
+shape takes over, which is the queue-size divergence the previous section
+measured getting worse. The mechanism the classifier uses moves from the clock
+to the book, and the answer stays "obviously fake".
+
+**Attribution is by permuting a whole family at once, not one feature at a
+time.** Single-feature permutation importance returns approximately zero for
+every column here, because five inter-arrival quantiles all say much the same
+thing and permuting one leaves the others to carry it. That reads as "no feature
+matters" against a perfect classifier, which is the opposite of the truth.
+
+```bash
+python scripts/simulator_turing_test.py --session INTC_2024-08-02
+```
+
 ## Multi-level integrated OFI (2026-09)
 
 Cont, Cucuringu and Zhang ([QF 2023](https://arxiv.org/abs/2112.13213)) show that
 combining order flow imbalance across the top book levels into one integrated
 variable explains contemporaneous price impact far better than best-level OFI.
-`scripts/multi_level_ofi.py` reproduces that on Databento MBP-10 for both
-sessions (MSFT 1,338,802 events; INTC 1,503,326). Vendor depth is used rather
-than this engine's reconstruction, so the result is a statement about the market
-rather than about the book-building code.
+`scripts/multi_level_ofi.py` reproduces that on Databento MBP-10 for all fifteen
+sessions. Vendor depth is used rather than this engine's reconstruction, so the
+result is a statement about the market rather than about the book-building code.
 
-**Contemporaneous R²** (price change regressed on trailing OFI over the same window):
+**Contemporaneous R²** at a ten-event horizon, per session:
 
-| horizon (events) | MSFT L1 | MSFT naive sum | MSFT PCA | INTC L1 | INTC naive sum | INTC PCA |
-|---|---:|---:|---:|---:|---:|---:|
-| 10 | 0.1121 | 0.2206 | **0.2231** | 0.0163 | 0.1018 | **0.1029** |
-| 50 | 0.2852 | 0.4398 | **0.4430** | 0.1078 | 0.2645 | **0.2658** |
-| 100 | 0.3519 | 0.5171 | **0.5195** | 0.2031 | 0.3849 | **0.3866** |
-| 500 | 0.4130 | 0.5999 | **0.5997** | 0.3423 | 0.4694 | **0.4711** |
+| session | best level (L1) | naive sum | PCA integrated | PCA / L1 |
+|---|---:|---:|---:|---:|
+| MSFT 2024-02-01 | 0.0009 | 0.0018 | 0.0018 | 2.0x |
+| MSFT 2024-04-01 | 0.0148 | 0.0319 | 0.0326 | 2.2x |
+| MSFT 2024-06-03 | 0.1121 | 0.2206 | 0.2231 | 2.0x |
+| MSFT 2024-10-01 | 0.0601 | 0.1263 | 0.1274 | 2.1x |
+| MSFT 2024-12-02 | 0.0089 | 0.0089 | 0.0115 | 1.3x |
+| INTC 2024-02-01 | 0.0300 | 0.1152 | 0.1154 | 3.8x |
+| INTC 2024-04-01 | 0.0104 | 0.0414 | 0.0441 | 4.2x |
+| INTC 2024-08-02 | 0.0163 | 0.1018 | 0.1029 | 6.3x |
+| INTC 2024-10-01 | 0.0079 | 0.0294 | 0.0294 | 3.7x |
+| INTC 2024-12-02 | 0.0364 | 0.1641 | 0.1632 | 4.5x |
+| AAPL 2024-02-01 | 0.0274 | 0.0491 | 0.0529 | 1.9x |
+| AAPL 2024-04-01 | 0.0034 | 0.0053 | 0.0060 | 1.8x |
+| AAPL 2024-06-03 | 0.1060 | 0.0673 | 0.1376 | 1.3x |
+| AAPL 2024-08-01 | 0.0327 | 0.1010 | 0.1008 | 3.1x |
+| AAPL 2024-10-01 | 0.1341 | 0.3563 | 0.3712 | 2.8x |
 
-**Predictive R²** (next window's price change):
+| stock | L1 R² | PCA R² | PCA / L1 |
+|---|---|---|---|
+| MSFT | 0.0009 to 0.1121 | 0.0018 to 0.2231 | 1.3 to 2.2x |
+| INTC | 0.0079 to 0.0364 | 0.0294 to 0.1632 | 3.7 to 6.3x |
+| AAPL | 0.0034 to 0.1341 | 0.0060 to 0.3712 | 1.3 to 3.1x |
 
-| horizon (events) | MSFT L1 | MSFT naive sum | MSFT PCA | INTC L1 | INTC naive sum | INTC PCA |
-|---|---:|---:|---:|---:|---:|---:|
-| 10 | **0.0168** | 0.0141 | 0.0145 | **0.0013** | 0.0002 | 0.0003 |
-| 50 | **0.0262** | 0.0234 | 0.0239 | **0.0152** | 0.0013 | 0.0013 |
-| 100 | **0.0124** | 0.0113 | 0.0115 | **0.0189** | 0.0042 | 0.0042 |
-| 500 | 0.0012 | 0.0038 | 0.0038 | **0.0077** | 0.0035 | 0.0035 |
+Four readings, one of which cuts against the method and one against the previous
+version of this section:
 
-Four readings, including one that cuts against the method:
+1. **Using the whole book raises contemporaneous explanatory power on all
+   fifteen sessions.** The integrated variable beats best-level OFI everywhere,
+   by 1.3x to 6.3x at a ten-event horizon. The CCZ result reproduces on every
+   session tried.
 
-1. **Using the whole book raises contemporaneous explanatory power on both
-   sessions.** On MSFT R² roughly doubles (0.11 to 0.22 at 10 events). The CCZ
-   result reproduces cleanly.
-2. **The gain is far larger in the large-tick book, and that is the payoff of
-   the second session.** On INTC, best-level OFI explains almost nothing at
-   short horizons (0.0163 at 10 events, against MSFT's 0.1121) while the
-   integrated variable recovers 0.1029 — a **6.3x** lift where MSFT sees 2.0x.
-   The fitted level-1 PCA weight drops to +0.10 on INTC from +0.18 on MSFT.
-   This is what the microstructure of a large-tick name predicts and one
-   session could not have shown: with the spread pinned at one tick 81% of the
-   time and 2,400-3,000 shares queued at the touch, best-quote *transitions*
-   are rare and carry little information, so almost everything informative is
-   happening in the queue behind the touch.
-3. **The PCA integration is barely distinguishable from a naive sum** on either
-   session (MSFT 0.2231 vs 0.2206; INTC 0.1029 vs 0.1018). The fitted weights
-   are close enough to uniform that the first principal component is nearly a
-   plain sum. The gain comes from *using multiple levels at all*, not from how
-   they are combined — worth stating rather than presenting PCA as the source
-   of the improvement.
-4. **Predictive power stays negligible on both, and L1 is the best of the three
-   on both.** Multi-level integration helps explain impact; it does not help
-   forecast it. Note the sign flip against reading 2: the deep book is where the
-   contemporaneous explanatory power lives and the touch is where what little
-   predictive power exists lives, and INTC separates the two more sharply than
-   MSFT (0.0189 for L1 against 0.0042 integrated, at 100 events).
+2. **The single-session numbers this section used to quote were not
+   representative, and that is the main thing fifteen sessions bought.** On MSFT
+   the ten-event L1 R² ranges from **0.0009 to 0.1121**, a factor of 120 across
+   five ordinary days of the same stock. The earlier version of this section read
+   0.1121 off one session and treated it as a property of the name. It is a
+   property of that day.
+
+3. **The lift is largest on INTC on all five of its sessions** (3.7 to 6.3x
+   against MSFT's 1.3 to 2.2x), and AAPL overlaps both (1.3 to 3.1x). The
+   ordering INTC > AAPL > MSFT holds for the ranges, but the AAPL and MSFT
+   ranges overlap, so on a single unseen session of either the ordering would not
+   be safe to assume.
+
+4. **The PCA integration is barely distinguishable from a naive sum.** The two
+   agree to within a few percent on 13 of 15 sessions; the exception is AAPL
+   2024-06-03, where the naive sum (0.0673) falls below even L1 (0.1060) while
+   PCA recovers 0.1376, so the weights matter when the levels disagree in sign.
+   The gain otherwise comes from *using multiple levels at all*, not from how
+   they are combined.
+
+5. **Predictive power stays negligible everywhere, and best-level OFI is the
+   better predictor on 12 of 15 sessions.** At a hundred-event horizon the
+   predictive R² is 0.0005 to 0.0189 for L1 and 0.0000 to 0.0115 for the
+   integrated variable; L1 wins on all five INTC sessions, all five AAPL and two
+   of five MSFT. Multi-level integration helps explain impact and does not help
+   forecast it, and the deep book is where the contemporaneous power lives while
+   the touch is where what little predictive power exists lives.
 
 That last point is the same pattern this repository's L1 study found, and the
-same one the propagator calibration in the impact repository found on both
-sessions: order flow explains contemporaneous returns strongly and predicts them
-barely at all. Independent measurements, one conclusion.
+same one the propagator calibration in the impact repository found: order flow
+explains contemporaneous returns strongly and predicts them barely at all.
 
 ```bash
 python scripts/multi_level_ofi.py --vendor <mbp10.dbn.zst>
@@ -690,7 +1157,7 @@ putting a number taken on different hardware in the same table would corrupt the
 comparison rather than broaden it. Correctness generalises across sessions,
 latency does not generalise across hosts.
 
-| | p50 | p99 | max | implied throughput |
+| measurement | p50 | p99 | max | implied throughput |
 |---|---|---|---|---|
 | replay only (book apply) | 127 ns/msg | 127 ns/msg | 127 ns/msg | 7.90M msgs/sec |
 | end to end (parse + replay + startup) | 1,085 ns/msg | 1,090 ns/msg | 1,090 ns/msg | 922k msgs/sec |
@@ -711,17 +1178,27 @@ production systems.
 
 ### Backend choice depends on book depth
 
-On full-depth MBO the `map` backend beats `flat_vector` by roughly **7.6x**
-(median of 5 trials on an identical 200k slice: 6.96M vs 0.92M msgs/sec, both
-producing byte-identical final book state). Trial-to-trial spread is wide on
-this hardware — 6.63-7.33M for `map` against 0.81-1.08M for `flat_vector`, so
-the ratio itself ranges 6.1x to 9.0x. The order of magnitude is the finding;
-the second digit is not. An earlier version of this line quoted a single run as
-"6.6x", which read as more precise than the measurement supports.
+On full-depth MBO the `map` backend beats `flat_vector` on **all fifteen
+sessions**, by a ratio that ranges from 1.4x to 9.1x. Median of 5 trials on an
+identical 200,000-message slice starting at the first regular-hours message,
+same host, both backends producing byte-identical final book state:
 
-The flat sorted vector's O(n) insert is competitive only while the number of
-live price levels stays small, which level-N sample files enforce and real
-full-depth data does not.
+| stock | `map` msgs/sec | `flat_vector` msgs/sec | ratio |
+|---|---:|---:|---:|
+| MSFT | 13.2M to 14.8M | 1.55M to 1.90M | **7.6 to 9.1x** |
+| AAPL | 15.6M to 17.7M | 2.64M to 7.70M | 2.3 to 6.0x |
+| INTC | 18.3M to 19.1M | 8.93M to 13.0M | 1.4 to 2.1x |
+
+The spread of ratios is the useful part, and it lines up with how many price
+levels each book carries. MSFT, whose median spread is four to six ticks and
+whose depth is spread over many levels, is where the flat vector's O(n) interior
+insert hurts most. INTC, pinned at a one-tick spread with its size concentrated
+on a few levels, is where it nearly keeps up. An earlier version of this section
+quoted 7.6x from one MSFT session as if it were the engine's number: it is the
+*bottom* of MSFT's range and roughly five times INTC's.
+
+These are host-specific timings on one laptop, comparable across sessions here
+only because every session was measured on the same machine in the same run.
 
 **Book reconstruction vs the vendor's own orderbook rows**
 (`scripts/validate_l1_reconstruction.py`): LOBSTER message streams begin at

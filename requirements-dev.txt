@@ -9,6 +9,9 @@ pytest
 # validate_mbp10_vs_vendor and queue_reactive both use scipy.stats for the exact
 # Garwood Poisson intervals, and the tests exercise those paths.
 scipy
+# scikit-learn: HistGradientBoosting and permutation importance for the
+# simulator Turing test in scripts/simulator_turing_test.py.
+scikit-learn
 
 # NOT included, deliberately:
 #   databento  - imported only inside functions that read a vendor .dbn file, and
