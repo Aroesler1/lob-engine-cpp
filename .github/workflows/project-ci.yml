@@ -2,6 +2,8 @@
 name: project-ci
 
 on:
+  push:
+    branches: ["review/**"]
   pull_request:
   merge_group:
   workflow_dispatch:
@@ -86,3 +88,8 @@ jobs:
           if [[ "$ran_any" -eq 0 ]]; then
             echo "No recognized project CI harness found; passing as metadata-only repo."
           fi
+
+      - name: Verify published aggregate evidence
+        run: |
+          python scripts/verify_evidence.py --check
+          python scripts/verify_queue_payoff.py --check

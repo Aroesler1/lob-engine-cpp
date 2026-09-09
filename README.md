@@ -20,22 +20,54 @@ This repository implements a small, deterministic C++ limit-order-book engine fo
 
 ## The sample, stated once
 
-**Fifteen symbol-days on three names, all in 2024: MSFT, INTC and AAPL.** Every
-session is an ordinary trading day. There are no stress days, no halts and no
-index events, and the sample was not drawn at random from anything.
+**Fifteen symbol-days on three names, all in 2024: MSFT, INTC and AAPL.**
+The sample was not drawn at random. There was no complete external audit of
+market stress, halts or index events, so absence of those events is not claimed.
 
-`INTC 2024-08-02` is the one exception: a single-name event day, the session
+`INTC 2024-08-02` is an identified single-name event day, the session
 after Intel's Q2 report and dividend suspension. It is kept because it is
 genuinely different, and it is flagged wherever it behaves differently.
 
 **Nothing below is a population or a regime claim.** A sentence here may say
 what was measured on Microsoft, Intel or Apple on these days. It may not say
 what is true of large-tick names, of small-tick names, or of Nasdaq stocks,
-because three names on ordinary days cannot support that and no amount of
+because three names on selected days cannot support that and no amount of
 careful phrasing makes them. Where a statement holds on some sessions and not
 others, the count is given.
 
 Session list, record counts and cost are in [DATA.md](DATA.md).
+
+## Verify the research in five minutes
+
+**The same fifteen symbol-days, three names, 2024.** The aggregate evidence is
+now published as CSVs; no credentials are needed to check the arithmetic.
+
+```bash
+python scripts/verify_evidence.py --check
+```
+
+| claim | verified from published aggregates |
+|---|---:|
+| absolute front-minus-back edge below 0.05 tick | **12 of 15 sessions**, corrected from 14 |
+| Hawkes median inter-arrival within a factor of two of real | 7 of 15 |
+| Hawkes timing distance improves | 15 of 15, mean L1 0.678310 to 0.315927 |
+| Hawkes touch-queue ratio moves further from one | 13 of 15 |
+| smallest classifier AUC against Hawkes | **0.993939** |
+
+[All eleven verified claims](report/evidence/claims.csv),
+[eighty-file aggregate manifest](report/evidence_manifest.csv),
+[audit protocol and limits](docs/evidence_audit.md), and
+[primary literature through 2026-09-06](docs/literature_audit_2026.md).
+The CSVs were recovered from existing local analysis outputs and published
+without a new fit. Their hashes establish integrity, not a fresh reconstruction
+from the licensed feed. Historical tables without surviving machine output are
+explicitly archived as [README transcriptions](report/readme_tables/index.csv),
+which do not independently prove those measurements.
+
+**What did not work:** improving every session's timing distribution did not
+produce a realistic simulator. Every fitted Hawkes stream remains easy to
+classify, and queue realism worsens on most sessions. The corrected queue count
+also leaves three, not one, differences above 0.05 tick.
 
 ## Repository layout
 
@@ -407,9 +439,9 @@ python scripts/run_lob_bench.py \
     --out report/lob_bench_INTC_2024-08-02.csv
 ```
 
-`--out` writes the full score table; like the other generated CSVs under
-`report/` it is a local artefact and not committed, so the tables above are the
-checked-in record.
+`--out` writes the full score table. The two aggregate score CSVs are now
+committed under `report/`; generated raw-message and book intermediates remain
+local. See the evidence manifest for their provenance.
 
 ## Queue-reactive calibration (2026-09)
 
@@ -698,7 +730,50 @@ the book. The exact book is what lets each of those be a measurement rather than
 an assertion: it prices a place in line, prices latency, diagnoses the
 simulator, and then refuses to let the fix off the hook.
 
-## Queue position value (2026-09)
+## Queue position: historical score and direct payoff (2026-09)
+
+**Scope: the same fifteen symbol-days on MSFT, INTC and AAPL in 2024.**
+The historical score below is retained for comparison, but is not expected
+realized payoff. It multiplies an unconditional arrival spread by fill
+probability and subtracts a first-fill markout. It omits price movement between
+arrival and fill, ignores subsequent fills and treats a partial fill as a
+full-order exposure. Its previous interpretation as the value of queue priority
+is withdrawn.
+
+`scripts/queue_payoff.py` computes each execution's signed difference between
+the midpoint ten seconds later and its actual execution price, multiplied by
+executed quantity. It sums all regular-session fills for an order and divides
+by original submitted shares. Unfilled shares contribute zero during the
+observed session; orders with any unavailable fill mark are excluded and counted.
+The decile mean weights orders equally, with minute-block bootstrap intervals.
+Remaining shares at the close and partially filled orders are reported explicitly.
+This is gross inventory marked to midpoint, before rebates, fees or liquidation
+costs. `--fee-ticks` applies a signed per-executed-share fee or rebate.
+
+```bash
+python scripts/queue_payoff.py --work-dir "$LOB_WORK_DIR"
+```
+
+The direct comparison favors the front in 6 of 15 sessions; the front itself
+has negative gross markout in 14 of 15. A favorable relative position need not
+be a profitable position. The 6,323,682 orders include 60,054 partial fills;
+5,348 orders lack a required future mark and are excluded from the mean.
+
+| sample | sessions | front better | front negative | median gap (ticks) | session range (ticks) |
+|---|---:|---:|---:|---:|---:|
+| all | 15 | 6 | 14 | -0.02538 | -0.12992 to 0.30041 |
+| AAPL | 5 | 1 | 5 | -0.03643 | -0.12992 to 0.01005 |
+| INTC | 5 | 0 | 5 | -0.04793 | -0.12628 to -0.02538 |
+| MSFT | 5 | 5 | 4 | 0.04904 | 0.01232 to 0.30041 |
+
+Sources: `report/queue_payoff/summary.csv`, `comparison.csv` and `deciles.csv`.
+The comparison file preserves each session's old score beside the direct
+front/back payoffs. Run `python scripts/verify_queue_payoff.py --check` to
+reconcile all counts and paired decile arithmetic without market data.
+
+Retrospective groups still differ in order size, duration and market conditions.
+Neither the old score nor the corrected direct markout identifies the causal
+benefit of advancing an otherwise identical order in the queue.
 
 For every new limit order resting at the best bid or ask, `scripts/queue_position_value.py`
 records where it stood in line, whether it traded before it was cancelled, how
@@ -710,7 +785,7 @@ book"](https://doi.org/10.2139/ssrn.2996221) (2017).
 
 ![Queue position value](report/queue_position/queue_position.png)
 
-The one-number summary is the expected edge in ticks, `fill probability x
+The historical summary is a descriptive score in ticks, `fill probability x
 (half spread at arrival - adverse selection)`, at the front against the back of
 the queue:
 
@@ -732,8 +807,8 @@ the queue:
 | AAPL 2024-08-01 | 604,941 | 0.155 | 0.259 | 0.113 | 1.066 | 1.151 | -0.013 | +0.012 | -0.025 |
 | AAPL 2024-10-01 | 1,014,799 | 0.096 | 0.165 | 0.060 | 0.446 | 0.425 | +0.045 | +0.032 | +0.013 |
 
-Per-stock ranges for the front-minus-back edge, with the count of sessions where
-being at the front is worth more:
+Per-stock ranges for the historical front-minus-back score, with the count of
+sessions where the front score is higher:
 
 | stock | front - back (ticks) | front is better on |
 |---|---|---:|
@@ -741,12 +816,14 @@ being at the front is worth more:
 | INTC | -0.012 to +0.049 | 3 of 5 |
 | AAPL | -0.067 to +0.020 | 3 of 5 |
 
-**Front of queue fills far more often, and is worth almost nothing.** The fill
+**INTC front orders fill more often; the historical score is usually small.** The fill
 advantage is unambiguous on INTC, where the front decile fills 30 to 48% of the
 time against 6 to 11% at the back. It converts into edge on 8 of 15 sessions and
-against it on 7, and every difference except MSFT 2024-12-02 is under a twentieth
-of a tick. Queue priority buys fills; it does not buy money, because the fills it
-buys are the ones that arrive when the price is about to move.
+against it on 7, and **12 of 15 absolute differences are under a twentieth of a tick**.
+The exceptions are MSFT 2024-10-01 (+0.061), MSFT 2024-12-02 (+0.386)
+and AAPL 2024-06-03 (-0.067). These are retrospective queue buckets with different sizes and lifetimes,
+not randomized priority assignments or a causal estimate of queue value. The
+measured fill advantage does not establish an executable profit.
 
 **Fill probability is not monotone in queue position.** On MSFT it is U-shaped:
 2024-06-03 runs 0.150 at the front, falls to 0.047 by the eighth decile, then
@@ -758,8 +835,12 @@ line, which is why `median_life_s` and `median_own_size` are in the output table
 **Adverse selection is larger than the whole front-to-back difference, on every
 session.** It runs 0.35 to 3.12 ticks against half spreads of 0.5 to 2.9, and it
 is the term that decides whether the edge is positive at all. On INTC 2024-08-02
-the event day, both ends of the queue have negative edge: the only session where
-resting at the touch loses money wherever you stand in line.
+the event day, both endpoints of the historical score are negative. That does
+not establish a realized loss for every queue position.
+
+**What did not work:** the original score combined incompatible price references
+and did not price partial fills. Its near-zero differences cannot support the
+previous claim that a place at the front is worth almost nothing.
 
 ```bash
 python scripts/queue_position_value.py
@@ -816,7 +897,7 @@ quoting rule with no signal and no inventory control, and it is worth stating
 before reading the curve: this measures the *slope*, not a strategy.
 
 **The slope is where the sessions separate, and it separates by spread.** On
-MSFT, whose median spread runs 4 to 5 ticks, the rule starts profitable on four
+MSFT, whose median spread runs 4 to 6 ticks, the rule starts profitable on four
 of five sessions and loses 1.8 to 4.5 ticks per fill by 100ms. On INTC, pinned at
 a one-tick spread, it starts unprofitable on all five and moves only 0.2 to 0.8
 ticks across four orders of magnitude of latency. There is more to lose where
@@ -964,17 +1045,19 @@ margins.
 
 **Kernel norms are stable and the process is subcritical everywhere.** The
 spectral radius of the norm matrix runs **0.622 to 0.791** across all fifteen
-sessions, with no session near 1, so the fitted process is stationary. Decay
+sessions, with no session near 1, so the fitted excitation matrix is subcritical. This alone does not prove
+stationarity of the coupled state-dependent queue simulator. Decay
 times run from about ten microseconds to a millisecond, which is the scale the
 burstiness failure lives at. Full kernel matrices with standard errors are in
 `report/hawkes/kernel_<session>.csv`.
 
 **The fitted kernel has structure the model was not told about.** Averaged over
 the fifteen sessions, the two largest entries are executions exciting themselves
-on the same side (0.58 at the ask, 0.61 at the bid), which is order splitting.
+on the same side (0.58 at the ask, 0.61 at the bid), which is consistent with clustered executions but does not identify order
+splitting from anonymous data.
 The next largest are cross-side: an execution at the ask excites limit orders at
 the **bid** with norm 0.58, and an execution at the bid excites limit orders at
-the ask with 0.48. That is replenishment, and it is a dependency between the two
+the ask with 0.48. That is cross-side arrival dependence, consistent with replenishment, between the two
 touch queues, which is precisely what Model I forbids by assumption and what the
 [failure analysis above](#where-it-fails-and-why) identified as the binding
 constraint. The Hawkes term reaches it through timing rather than through state,
@@ -1041,7 +1124,7 @@ that. Reporting this as "AUC improved on 14 of 15" would be true and useless.
 **Because the headline AUC is saturated, the informative number is the one from
 a restricted feature set.** Refitting on the timing features alone: the base
 simulator is caught at 1.000 on every session, the Hawkes simulator at 0.978 to
-0.999. So the Hawkes term genuinely weakened the timing tell, and it is nowhere
+1.000 when rounded to three decimals. So the Hawkes term genuinely weakened the timing tell, and it is nowhere
 near removing it. Matching the median inter-arrival is not matching the
 distribution, which is exactly the gap a Turing test exists to expose and a
 table of medians cannot.

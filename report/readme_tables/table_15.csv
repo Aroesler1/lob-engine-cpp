@@ -1,0 +1,6 @@
+line_number,markdown_row
+888,| stock | net at d = 0 | net at 100ms | profitable at d = 0 |
+889,|---|---|---|---:|
+890,| MSFT | -0.219 to +0.621 | -4.529 to -1.819 | 4 of 5 |
+891,| INTC | -0.311 to -0.102 | -0.902 to -0.378 | 0 of 5 |
+892,| AAPL | -0.163 to +0.149 | -2.324 to -0.495 | 2 of 5 |

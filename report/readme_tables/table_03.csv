@@ -1,0 +1,12 @@
+line_number,markdown_row
+271,| quantity | MSFT 2024-06-03 | INTC 2024-08-02 |
+272,|---|---:|---:|
+273,"| MBO records in | 4,003,834 | 2,356,988 |"
+274,"| LOBSTER messages out | 3,862,854 | 2,051,624 |"
+275,| malformed rows | 0 | 0 |
+276,| **agreement** | **100.0000%** | **100.0000%** |
+277,"| cells compared | 53,551,466 | 60,128,762 |"
+278,"| - vendor `A`/`C`/`F` vs engine post-event | 49,611,426 | 51,939,050 |"
+279,"| - vendor `T` prints vs engine pre-fill | 3,940,040 | 8,189,712 |"
+280,"| slots where both agree the level is absent | 734 | 4,638 |"
+281,| **slots where one side sees a level and the other does not** | **0** | **0** |

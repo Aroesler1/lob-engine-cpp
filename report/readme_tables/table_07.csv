@@ -1,0 +1,6 @@
+line_number,markdown_row
+488,| stock | median spread | inside the window | implied theta | theta is a valid probability on |
+489,|---|---|---|---|---:|
+490,| MSFT | 4 to 6 ticks | 55.7 to 89.4% | 2.63 to 7.34 | **0 of 5** |
+491,| INTC | 1 tick | 100.0% | 0.50 to 0.60 | 5 of 5 |
+492,| AAPL | 1 to 2 ticks | 99.7 to 100.0% | 0.48 to 0.76 | 5 of 5 |

@@ -1,0 +1,6 @@
+line_number,markdown_row
+1269,| stock | `map` msgs/sec | `flat_vector` msgs/sec | ratio |
+1270,|---|---:|---:|---:|
+1271,| MSFT | 13.2M to 14.8M | 1.55M to 1.90M | **7.6 to 9.1x** |
+1272,| AAPL | 15.6M to 17.7M | 2.64M to 7.70M | 2.3 to 6.0x |
+1273,| INTC | 18.3M to 19.1M | 8.93M to 13.0M | 1.4 to 2.1x |

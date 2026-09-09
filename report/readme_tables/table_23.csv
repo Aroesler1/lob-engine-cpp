@@ -1,0 +1,7 @@
+line_number,markdown_row
+1307,| relation | horizon (events) | signal | Pearson | Spearman |
+1308,|---|---|---|---|---|
+1309,| contemporaneous | 1000 | rolling OFI (1000) | **+0.85** | **+0.94** |
+1310,| contemporaneous | 1000 | depth imbalance L1 | +0.22 | +0.26 |
+1311,| forward | 100 | rolling OFI (1000) | +0.13 | +0.15 |
+1312,| forward | 100 | depth imbalance L1 | **+0.48** | **+0.46** |

@@ -47,7 +47,7 @@ BOOK_DEPTH = 3
 RTH_OPEN, RTH_CLOSE = 34_200, 57_600     # 09:30:00 and 16:00:00 as LOBSTER seconds
 TICK = 100                               # a cent, in LOBSTER 1e-4 dollar units
 
-# The sample, stated once so no script invents its own. Three names on ordinary
+# The sample, stated once so no script invents its own. Three names on selected
 # 2024 days: this is not a population sample and nothing drawn from it
 # generalises to "large-tick names" or "Nasdaq stocks".
 SESSION_DATES: dict[str, tuple[str, ...]] = {

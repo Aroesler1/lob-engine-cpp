@@ -1,0 +1,6 @@
+line_number,markdown_row
+570,| stock | median inter-arrival | mean queue at Q₁ | mean spread | 1s mid move sd |
+571,|---|---|---|---|---|
+572,| MSFT | 34 to 158x | 4.0 to 13.4x | 0.58 to 0.79x | 0.46 to 0.58x |
+573,| INTC | 71 to 206x | 3.4 to 13.4x | 0.89 to 1.20x | 0.11 to 0.70x |
+574,| AAPL | 56 to 182x | 1.1 to 1.6x | 0.86 to 0.95x | 0.47 to 0.57x |
