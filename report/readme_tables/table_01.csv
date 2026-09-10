@@ -1,0 +1,8 @@
+line_number,markdown_row
+49,| claim | verified from published aggregates |
+50,|---|---:|
+51,"| absolute front-minus-back edge below 0.05 tick | **12 of 15 sessions**, corrected from 14 |"
+52,| Hawkes median inter-arrival within a factor of two of real | 7 of 15 |
+53,"| Hawkes timing distance improves | 15 of 15, mean L1 0.678310 to 0.315927 |"
+54,| Hawkes touch-queue ratio moves further from one | 13 of 15 |
+55,| smallest classifier AUC against Hawkes | **0.993939** |

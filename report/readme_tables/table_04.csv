@@ -1,0 +1,9 @@
+line_number,markdown_row
+295,| quantity | MSFT 2024-06-03 | INTC 2024-08-02 |
+296,|---|---:|---:|
+297,"| RTH mid, open → close | 415.63 → 413.64 | 21.95 → 21.48 |"
+298,"| one tick, in bp of mid | 0.24 bp | 4.73 bp |"
+299,| median spread | $0.05 (1.21 bp) | $0.01 (4.73 bp) |
+300,| share of session at a one-tick spread | 1.0% | 81.1% |
+301,"| median touch size, bid / ask | 68 / 63 | 2,415 / 3,000 |"
+302,"| displayed fills | 70,510 | 152,683 |"

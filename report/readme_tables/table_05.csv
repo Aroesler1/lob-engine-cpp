@@ -1,0 +1,11 @@
+line_number,markdown_row
+400,| statistic | MSFT 2024-06-03 | INTC 2024-08-02 |
+401,|---|---:|---:|
+402,| spread | 0.000000 | 0.000000 |
+403,| orderbook imbalance | 0.000000 | 0.000000 |
+404,| ask / bid volume at touch | 0.000000 | 0.000000 |
+405,| ask / bid volume over 10 levels | 0.000000 | 0.000000 |
+406,"| limit order depth, ask / bid | 0.000000 | 0.000000 |"
+407,"| cancellation depth, ask / bid | 0.000000 | 0.000000 |"
+408,| log inter-arrival time | 0.000000 | 0.000000 |
+409,| log time to cancel | 0.000000 | 0.000000 |

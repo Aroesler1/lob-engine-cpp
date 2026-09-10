@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""What a place in line at the touch is worth.
+"""Historical queue score, retained for reproducibility, not direct payoff.
+
+Use queue_payoff.py for execution-price markouts weighted by actual fills.
+The score below mixes unconditional arrival spreads with conditional first-fill
+markouts, omits arrival-to-fill movement and ignores partial-fill sizing.
+It must not be interpreted as expected realized payoff or causal queue value.
 
 A limit order at the best quote earns the spread if it fills and loses to
 adverse selection if the price moves through it. Queue position governs both:

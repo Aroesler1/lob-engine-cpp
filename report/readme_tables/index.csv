@@ -1,0 +1,24 @@
+path,section,source,provenance,source_sha256
+report/readme_tables/table_01.csv,Verify the research in five minutes,README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_02.csv,Benchmarking,README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_03.csv,"Vendor cross-check: exact agreement on MBP-10, two sessions (2026-09)",README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_04.csv,The second session is a different kind of book,README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_05.csv,Second opinion: LOB-Bench (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_06.csv,"Where the model's assumptions hold, across fifteen sessions",README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_07.csv,"Where the model's assumptions hold, across fifteen sessions",README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_08.csv,Simulated versus real,README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_09.csv,Simulated versus real,README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_10.csv,Scored again with LOB-Bench,README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_11.csv,Queue position: historical score and direct payoff (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_12.csv,Queue position: historical score and direct payoff (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_13.csv,Queue position: historical score and direct payoff (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_14.csv,The cost of latency (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_15.csv,The cost of latency (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_16.csv,Hawkes self-excitation (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_17.csv,"The same trade, scored by LOB-Bench",README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_18.csv,Turing test: can a classifier tell the simulator from the market? (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_19.csv,Multi-level integrated OFI (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_20.csv,Multi-level integrated OFI (2026-09),README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_21.csv,"Performance on full-depth data (Databento XNAS.ITCH MBO, 2026-08)",README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_22.csv,Backend choice depends on book depth,README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8
+report/readme_tables/table_23.csv,Backend choice depends on book depth,README.md,readme_transcription_only,528e13e24688f2e2dbe763d218c73f841353a4fe79fa65d6c313ff2a413e8ce8

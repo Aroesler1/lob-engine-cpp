@@ -8,7 +8,12 @@ LOBSTER is a reconstruction of the same Nasdaq TotalView-ITCH feed, so Databento
 
 - Source code, build files, and tests
 - Small reduced message fixtures under `data/*.csv` (25 lines, 20 valid messages each) so the build and tests run on a fresh clone with no external data
-- Derived results: benchmark tables, latency percentiles, analytics summaries
+- Eighty reviewed aggregate CSVs under `report/`, with row counts and SHA-256
+  hashes in `report/evidence_manifest.csv`; fitted rates, distances, deciles,
+  latency summaries and classifier scores, not event records
+- `report/evidence/claims.csv`, recomputed from those aggregates by the offline verifier
+- `report/readme_tables/`, explicitly labelled transcriptions of historical
+  README tables, including measurements without a surviving machine-output CSV
 
 ## What is not committed
 
@@ -18,14 +23,14 @@ LOBSTER is a reconstruction of the same Nasdaq TotalView-ITCH feed, so Databento
 
 ## Sessions used
 
-**Fifteen symbol-days on three names, all in 2024.** Every one is an ordinary
-trading day; the sample contains no stress days, no halts and no index events.
-`INTC 2024-08-02` is the single exception and is a single-name event day, the
+**Fifteen symbol-days on three names, all in 2024.** No complete external audit
+of stress, halts or index events was performed; their absence is not asserted.
+`INTC 2024-08-02` is an identified single-name event day, the
 session after Intel's Q2 report and dividend suspension. It is kept because it
 is genuinely different and it is flagged wherever it behaves differently.
 
 Nothing measured on this sample is a population or a regime claim. Three names
-on ordinary days support statements about Microsoft, Intel and Apple on those
+on selected days support statements about Microsoft, Intel and Apple on those
 days, and nothing wider.
 
 All fifteen cost **$0.0000**, confirmed with `metadata.get_cost` rather than
@@ -76,3 +81,27 @@ Requires `DATABENTO_API_KEY` and an entitlement to `XNAS.ITCH`.
 ## Licence and retention
 
 Databento data is accessed under a programme licence and is not redistributed here. Raw extracts are deleted at the end of the associated academic affiliation; code, derived statistics, and figures are not derived-from-restriction and remain.
+
+## Publication audit, 2026-09-06
+
+The eighty aggregate CSVs were previously local ignored artifacts. They are now
+explicitly allowlisted and published without a new fit or new source. The
+manifest records the available analysis-code revision and recovered file hashes;
+it is not proof that the raw-to-aggregate pipeline was rerun in this review.
+The event streams, books and raw vendor extracts remain excluded.
+
+`python scripts/verify_evidence.py --check` needs only the Python standard
+library. It verifies the frozen sample and source integrity and recalculates
+eleven headline summaries. Raw vendor agreement and historical host timings
+require the corresponding licensed-data validators and original measurement
+conditions. A README transcription is archival evidence of what was claimed,
+not an independent reproduction of the underlying measurement.
+
+## Direct queue-payoff aggregates, 2026-09-08
+
+`report/queue_payoff/deciles.csv` contains per-decile counts, aggregate share
+quantities, marked payoffs and bootstrap intervals. `comparison.csv` compares
+old and new estimands per session; `summary.csv` reports the session ranges and
+counts. These are derived from the existing fifteen cached message/book pairs.
+No source, licence, quote sequence, order identifier or raw market-data file is
+added. The offline verifier reconciles aggregates, not the raw reconstruction.

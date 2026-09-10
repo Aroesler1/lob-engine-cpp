@@ -1,0 +1,5 @@
+line_number,markdown_row
+1243,| measurement | p50 | p99 | max | implied throughput |
+1244,|---|---|---|---|---|
+1245,| replay only (book apply) | 127 ns/msg | 127 ns/msg | 127 ns/msg | 7.90M msgs/sec |
+1246,"| end to end (parse + replay + startup) | 1,085 ns/msg | 1,090 ns/msg | 1,090 ns/msg | 922k msgs/sec |"

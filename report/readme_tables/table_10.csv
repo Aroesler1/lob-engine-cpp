@@ -1,0 +1,12 @@
+line_number,markdown_row
+592,| statistic | INTC L1 | INTC W₁ | MSFT L1 | MSFT W₁ |
+593,|---|---:|---:|---:|---:|
+594,| spread | 0.271 | 0.201 | 0.300 | 0.527 |
+595,| orderbook imbalance | 0.499 | - | 0.135 | - |
+596,| ask volume at touch | 0.388 | 0.856 | 0.000 | 0.252 |
+597,| bid volume at touch | 0.465 | 0.936 | 0.000 | 0.299 |
+598,| ask volume over 3 levels | 0.699 | 1.420 | 0.610 | 0.192 |
+599,| bid volume over 3 levels | 0.672 | 1.169 | 0.612 | 0.267 |
+600,| limit ask order depth | **0.094** | 0.200 | 0.723 | 0.554 |
+601,| limit bid order depth | 0.228 | 0.115 | 0.619 | 0.223 |
+602,| log inter-arrival time | 0.635 | 0.973 | 0.618 | 0.917 |

@@ -1,0 +1,18 @@
+line_number,markdown_row
+1094,"| session | AUC base | AUC Hawkes | timing only, base | timing only, Hawkes | without timing, Hawkes | top family, base | top family, Hawkes |"
+1095,|---|---:|---:|---:|---:|---:|---|---|
+1096,| MSFT 2024-02-01 | 1.000 | 1.000 | 1.000 | 1.000 | 0.999 | timing | timing |
+1097,| MSFT 2024-04-01 | 1.000 | 1.000 | 1.000 | 1.000 | 0.998 | timing | timing |
+1098,| MSFT 2024-06-03 | 1.000 | 1.000 | 1.000 | 0.999 | 0.991 | timing | timing |
+1099,| MSFT 2024-10-01 | 1.000 | 1.000 | 1.000 | 1.000 | 0.999 | timing | timing |
+1100,| MSFT 2024-12-02 | 1.000 | 1.000 | 1.000 | 0.992 | 0.997 | timing | event mix |
+1101,| INTC 2024-02-01 | 1.000 | 0.998 | 1.000 | 0.991 | 0.996 | timing | book shape |
+1102,| INTC 2024-04-01 | 1.000 | 0.994 | 1.000 | 0.987 | 0.990 | timing | book shape |
+1103,| INTC 2024-08-02 | 1.000 | 0.995 | 1.000 | 0.991 | 0.991 | timing | event mix |
+1104,| INTC 2024-10-01 | 1.000 | 0.996 | 1.000 | 0.992 | 0.994 | timing | book shape |
+1105,| INTC 2024-12-02 | 0.997 | 1.000 | 1.000 | 0.988 | 0.999 | book shape | book shape |
+1106,| AAPL 2024-02-01 | 1.000 | 0.999 | 1.000 | 0.978 | 0.990 | timing | timing |
+1107,| AAPL 2024-04-01 | 1.000 | 0.997 | 1.000 | 0.980 | 0.985 | timing | event mix |
+1108,| AAPL 2024-06-03 | 1.000 | 1.000 | 1.000 | 0.994 | 0.994 | timing | timing |
+1109,| AAPL 2024-08-01 | 1.000 | 1.000 | 1.000 | 0.997 | 0.995 | timing | timing |
+1110,| AAPL 2024-10-01 | 1.000 | 1.000 | 1.000 | 0.999 | 0.997 | timing | timing |
